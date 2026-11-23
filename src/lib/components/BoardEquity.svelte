@@ -25,16 +25,20 @@
 	let otherPick = $state('BB');
 	let side = $state<'opener' | 'other'>('other');
 	// Flop, turn, river. The turn and river are optional; a later card only counts if the ones before it are set.
-	let board = $state<(Card | null)[]>([
+	// One pool of seven slots: flop, turn, river, then your two cards. The deck is shared, so a card
+	// can only be in one place.
+	let slots = $state<(Card | null)[]>([
 		makeCard(14, 0),
 		makeCard(7, 2),
 		makeCard(2, 3),
 		null,
+		null,
+		null,
 		null
 	]);
-	let hole = $state<(Card | null)[]>([null, null]);
+	const board = $derived(slots.slice(0, 5));
+	const hole = $derived(slots.slice(5, 7));
 	let bet = $state<number | null>(null);
-	let view = $state<'mine' | 'theirs'>('mine');
 
 	const POTS: { id: Pot; label: string }[] = [
 		{ id: 'srp', label: 'Single-raised pot' },
@@ -92,9 +96,13 @@
 			board: inPlay,
 			hole: hole.every((c) => c !== null) ? (hole as Card[]) : null,
 			bet,
-			view
+			view: 'mine'
 		};
 	});
+	// The heat map of their range is a second request for the same spot.
+	const theirQuery = $derived(query ? { ...query, view: 'theirs' as const } : null);
+	const theirKey = $derived(theirQuery ? boardRequest(theirQuery) : null);
+	const theirGrid = $derived(theirKey ? rangeStore.boards[theirKey]?.unknown.grid : undefined);
 	const key = $derived(query ? boardRequest(query) : null);
 	const fresh = $derived(key ? rangeStore.boards[key] : undefined);
 
@@ -110,16 +118,20 @@
 		if (query) void loadBoard(query);
 	});
 	$effect(() => {
+		if (theirQuery && fresh) void loadBoard(theirQuery);
+	});
+	$effect(() => {
 		if (fresh) last = fresh;
 	});
 
-	const blockedForBoard = $derived(new Set(hole.filter((c): c is Card => c !== null)));
-	const blockedForHole = $derived(new Set(inPlay));
-
 	function setBoard(cards: Card[]) {
-		board = [...cards, null, null];
 		// A card on the new flop cannot also be in your hand.
-		hole = hole.map((c) => (c !== null && cards.includes(c) ? null : c));
+		slots = [
+			...cards,
+			null,
+			null,
+			...hole.map((c) => (c !== null && cards.includes(c) ? null : c))
+		];
 	}
 
 	function randomFlop() {
@@ -129,7 +141,7 @@
 		while (picked.length < 3) {
 			picked.push(...deck.splice(Math.floor(Math.random() * deck.length), 1));
 		}
-		board = [...picked, null, null];
+		slots = [...picked, null, null, ...hole];
 	}
 
 	const pct = (v: number, digits = 1) => `${(v * 100).toFixed(digits)}%`;
@@ -219,8 +231,8 @@
 		<div class="flex flex-col gap-1.5">
 			<div class="flex flex-wrap items-center justify-between gap-2">
 				<span class="text-xs font-semibold text-slate-400">
-					Board <span class="font-normal"
-						>(flop required; add the turn and river for later streets)</span
+					Board and my hand <span class="font-normal"
+						>(flop required; turn, river and your hand are optional)</span
 					>
 				</span>
 				<div class="flex flex-wrap gap-1">
@@ -229,34 +241,24 @@
 						>
 					{/each}
 					<button class="chip small" onclick={randomFlop}>Random</button>
+					{#if hole.some((c) => c !== null)}
+						<button class="chip small" onclick={() => (slots = [...board, null, null])}
+							>Clear hand</button
+						>
+					{/if}
 				</div>
 			</div>
 			<CardSelect
-				bind:cards={board}
-				name="Board"
-				labels={['Flop 1', 'Flop 2', 'Flop 3', 'Turn', 'River']}
-				blocked={blockedForBoard}
+				bind:cards={slots}
+				name="Cards"
+				labels={['Flop 1', 'Flop 2', 'Flop 3', 'Turn', 'River', 'Hand 1', 'Hand 2']}
+				groups={[
+					{ title: 'Board', from: 0, to: 5 },
+					{ title: 'My hand', from: 5, to: 7 }
+				]}
 				compact
 			/>
-		</div>
-
-		<div class="flex flex-col gap-1.5">
-			<div class="flex flex-wrap items-center justify-between gap-2">
-				<span class="text-xs font-semibold text-slate-400">
-					My hand <span class="font-normal">(optional — the other player's cards stay unknown)</span
-					>
-				</span>
-				{#if hole.some((c) => c !== null)}
-					<button class="chip small" onclick={() => (hole = [null, null])}>Clear</button>
-				{/if}
-			</div>
-			<CardSelect
-				bind:cards={hole}
-				name="Hand"
-				labels={['Card 1', 'Card 2']}
-				blocked={blockedForHole}
-				compact
-			/>
+			<p class="text-xs text-slate-500">The other player's cards stay unknown.</p>
 		</div>
 
 		<label class="flex items-center gap-2 text-xs font-semibold text-slate-400">
@@ -326,36 +328,32 @@
 				/>
 
 				<div class="flex flex-col gap-1.5">
-					<div class="flex flex-wrap items-center justify-between gap-2">
-						<span class="text-xs font-semibold text-slate-400">Equity of each hand</span>
-						<div class="flex gap-1" role="tablist" aria-label="Heat map of">
-							<button
-								class="chip small"
-								class:selected={view === 'mine'}
-								role="tab"
-								aria-selected={view === 'mine'}
-								onclick={() => (view = 'mine')}
-							>
-								Your range
-							</button>
-							<button
-								class="chip small"
-								class:selected={view === 'theirs'}
-								role="tab"
-								aria-selected={view === 'theirs'}
-								onclick={() => (view = 'theirs')}
-							>
-								Their range
-							</button>
+					<span class="text-xs font-semibold text-slate-400">Equity of each hand</span>
+					<div class="grid gap-3 sm:grid-cols-2">
+						<div class="flex min-w-0 flex-col gap-1">
+							<span class="text-xs font-bold text-amber-400">Your range · {youLabel}</span>
+							<HandGrid
+								hands={new Set<string>()}
+								verb=""
+								label="Equity of your range"
+								heat={result.unknown.grid}
+								marked={result.known ? result.known.hand : null}
+							/>
+						</div>
+						<div class="flex min-w-0 flex-col gap-1" aria-busy={!theirGrid}>
+							<span class="text-xs font-bold text-sky-400">Their range · {themLabel}</span>
+							{#if theirGrid}
+								<HandGrid
+									hands={new Set<string>()}
+									verb=""
+									label="Equity of their range"
+									heat={theirGrid}
+								/>
+							{:else}
+								<p class="text-sm text-slate-400">Loading…</p>
+							{/if}
 						</div>
 					</div>
-					<HandGrid
-						hands={new Set<string>()}
-						verb=""
-						label={`Equity of ${view === 'mine' ? 'your' : 'their'} range`}
-						heat={result.unknown.grid}
-						marked={view === 'mine' && result.known ? result.known.hand : null}
-					/>
 					<div class="flex items-center gap-2 text-[0.65rem] text-slate-400">
 						<span>0%</span>
 						<span class="legend-bar flex-1"></span>

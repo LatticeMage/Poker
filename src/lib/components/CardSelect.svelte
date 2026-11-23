@@ -20,7 +20,8 @@
 		labels,
 		name,
 		blocked = new Set<Card>(),
-		compact = false
+		compact = false,
+		groups
 	}: {
 		cards: (Card | null)[];
 		/** Names this picker's deck for assistive tech and tests: "Flop", "Hand". */
@@ -29,7 +30,10 @@
 		labels: string[];
 		blocked?: Set<Card>;
 		compact?: boolean;
+		/** Optional titled groups of slots shown side by side, e.g. Board (0-4) and Hand (5-6). */
+		groups?: { title: string; from: number; to: number }[];
 	} = $props();
+	const shown = $derived(groups ?? [{ title: '', from: 0, to: cards.length }]);
 
 	const RANKS = [14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2];
 	let cursor = $state(0);
@@ -50,25 +54,35 @@
 </script>
 
 <div class="flex flex-col gap-2">
-	<div class="flex flex-wrap items-center gap-2">
-		{#each cards as card, i (i)}
-			<button
-				type="button"
-				class="slot"
-				class:current={cursor === i}
-				class:red={card !== null && isRed(card)}
-				class:empty={card === null}
-				aria-label={`${labels[i]}: ${card === null ? 'empty' : cardName(card)}`}
-				aria-pressed={cursor === i}
-				onclick={() => (cursor === i && card !== null ? clearSlot(i) : (cursor = i))}
-				title={card === null ? `Choose ${labels[i]}` : 'Click again to clear'}
-			>
-				{#if card === null}
-					<span class="text-[0.6rem] font-semibold tracking-wide uppercase">{labels[i]}</span>
-				{:else}
-					<span>{rankLabel(rankOf(card))}</span><span>{SUIT_SYMBOLS[suitOf(card)]}</span>
+	<div class="flex flex-wrap items-end gap-x-4 gap-y-2">
+		{#each shown as group (group.title)}
+			<div class="flex flex-col gap-1" role="group" aria-label={group.title || undefined}>
+				{#if group.title}
+					<span class="text-xs font-semibold text-slate-400">{group.title}</span>
 				{/if}
-			</button>
+				<div class="flex flex-wrap items-center gap-2">
+					{#each cards.slice(group.from, group.to) as card, j (group.from + j)}
+						{@const i = group.from + j}
+						<button
+							type="button"
+							class="slot"
+							class:current={cursor === i}
+							class:red={card !== null && isRed(card)}
+							class:empty={card === null}
+							aria-label={`${labels[i]}: ${card === null ? 'empty' : cardName(card)}`}
+							aria-pressed={cursor === i}
+							onclick={() => (cursor === i && card !== null ? clearSlot(i) : (cursor = i))}
+							title={card === null ? `Choose ${labels[i]}` : 'Click again to clear'}
+						>
+							{#if card === null}
+								<span class="text-[0.6rem] font-semibold tracking-wide uppercase">{labels[i]}</span>
+							{:else}
+								<span>{rankLabel(rankOf(card))}</span><span>{SUIT_SYMBOLS[suitOf(card)]}</span>
+							{/if}
+						</button>
+					{/each}
+				</div>
+			</div>
 		{/each}
 	</div>
 

@@ -66,7 +66,7 @@
 	function mixTitle(hand: string): string {
 		const [value, bluff, call] = mix?.[hand] ?? [0, 0, 0];
 		const parts = [
-			value > 0 && `raise (value) ${Math.round(value * 100)}%`,
+			value > 0 && `${bluff > 0 || call > 0 ? 'raise (value)' : verb} ${Math.round(value * 100)}%`,
 			bluff > 0 && `raise (bluff) ${Math.round(bluff * 100)}%`,
 			call > 0 && `call ${Math.round(call * 100)}%`
 		].filter(Boolean);

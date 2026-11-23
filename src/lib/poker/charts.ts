@@ -10,6 +10,7 @@ import type {
 	SpotList
 } from '$lib/types/ranges';
 import type { Card } from './cards';
+import pushFoldMixData from './data/pushfold-mix.json';
 import { evaluate } from './evaluate';
 import * as postflop from './postflop';
 import {
@@ -17,6 +18,7 @@ import {
 	ORDER,
 	chartFor,
 	classCombos,
+	combos,
 	handOf,
 	percentile,
 	pushfold,
@@ -32,6 +34,52 @@ export class ChartError extends Error {}
 const round1 = (x: number) => Math.round(x * 10) / 10;
 const byStrength = (hands: Iterable<string>) =>
 	[...hands].sort((a, b) => percentile(a) - percentile(b));
+
+const pushFoldMix = pushFoldMixData as Record<
+	string,
+	{ push: Record<string, number>; call: Record<string, number> }
+>;
+
+/**
+ * How often each hand opens. A solver mixes near the edge of a range: the weakest hands inside it
+ * open only some of the time, and the best hands just outside it open a little. The edge is
+ * smoothed that way here while the total share of hands that open stays what the chart says.
+ */
+const EDGE_SHARE = 0.12; // the weakest 12% of the opening combos are mixed
+const OUTSIDE_HANDS = 14; // how many hands beyond the edge get a small share
+
+function openMix(hands: Iterable<string>): Record<string, number> {
+	const inside = new Set(hands);
+	const order = [...ORDER];
+	const mix: Record<string, number> = {};
+	for (const h of inside) mix[h] = 1;
+	if (inside.size === 0) return mix;
+	const members = order.filter((h) => inside.has(h));
+	const total = members.reduce((n, h) => n + combos(h), 0);
+	let edge = 0;
+	let deficit = 0;
+	for (let i = members.length - 1; i >= 0 && edge < EDGE_SHARE * total; i--) {
+		const h = members[i];
+		const rank = edge / (EDGE_SHARE * total); // 0 at the very edge ... 1 deeper in
+		const f = 0.3 + 0.65 * rank;
+		mix[h] = Math.round(f * 100) / 100;
+		deficit += combos(h) * (1 - mix[h]);
+		edge += combos(h);
+	}
+	const last = members.length ? order.indexOf(members[members.length - 1]) : -1;
+	const outside = order
+		.slice(last + 1)
+		.filter((h) => !inside.has(h))
+		.slice(0, OUTSIDE_HANDS);
+	const weights = outside.map((_, i) => 1 - i / OUTSIDE_HANDS);
+	const mass = outside.reduce((n, h, i) => n + combos(h) * weights[i], 0);
+	const scale = mass > 0 ? Math.min(deficit / mass, 1 / weights[0]) : 0;
+	outside.forEach((h, i) => {
+		const f = Math.round(Math.min(1, weights[i] * scale) * 100) / 100;
+		if (f >= 0.02) mix[h] = f;
+	});
+	return mix;
+}
 
 /** Raise-first-in starting-hand ranges for every seat at a table of this size. */
 export function rangeChart(players: number): RangeChart {
@@ -49,7 +97,8 @@ export function rangeChart(players: number): RangeChart {
 			source: range.source,
 			label: range.label,
 			url: range.url,
-			hands: byStrength(range.hands)
+			hands: byStrength(range.hands),
+			mix: openMix(range.hands)
 		})),
 		order: [...ORDER],
 		equity_vs_random: { ...EQUITY_VS_RANDOM }
@@ -64,6 +113,8 @@ export function pushFoldChart(stackBb: number): PushFoldChart {
 		stack_bb: table.stack_bb,
 		push: byStrength(table.push),
 		call: byStrength(table.call),
+		push_mix: pushFoldMix[String(table.stack_bb)]?.push ?? {},
+		call_mix: pushFoldMix[String(table.stack_bb)]?.call ?? {},
 		push_pct: table.push_pct,
 		call_pct: table.call_pct,
 		exploitability_bb: table.exploitability_bb,

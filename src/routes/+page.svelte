@@ -1,6 +1,7 @@
 <!--routes/+page.svelte-->
 
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { act, nextHand, resumeGame, retry, startGame } from '$lib/actions/games';
 	import BetControls from '$lib/components/BetControls.svelte';
@@ -79,7 +80,7 @@
 		<div class="ml-auto flex flex-wrap justify-end gap-1.5">
 			<button class="top-btn lg:hidden" onclick={() => (showLog = true)}>Log</button>
 			<button class="top-btn" onclick={() => (showCharts = true)}>Charts</button>
-			<a class="top-btn" href="/learn">Learn</a>
+			<a class="top-btn" href={resolve('/learn')}>Learn</a>
 			<button class="top-btn relative" onclick={() => (showPicker = true)}>
 				Pick cards
 				{#if settings.hasPicks}

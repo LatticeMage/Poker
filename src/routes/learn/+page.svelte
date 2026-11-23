@@ -1,6 +1,7 @@
 <!--routes/learn/+page.svelte-->
 
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import BoardEquity from '$lib/components/BoardEquity.svelte';
 	import HandQuiz from '$lib/components/HandQuiz.svelte';
 	import RangeChart from '$lib/components/RangeChart.svelte';
@@ -24,7 +25,7 @@
 	<header
 		class="sticky top-0 z-10 flex items-center gap-3 border-b border-slate-800 bg-slate-950/90 px-3 py-2 backdrop-blur sm:px-4"
 	>
-		<a class="back" href="/">← Table</a>
+		<a class="back" href={resolve('/')}>← Table</a>
 		<h1 class="text-base font-black tracking-tight sm:text-lg">
 			<span class="text-amber-400">♠</span> Learn
 		</h1>

@@ -11,7 +11,16 @@
 	import { boardRequest, loadBoard, loadSpotList } from '$lib/actions/ranges';
 	import { rangeStore } from '$lib/stores/ranges.svelte';
 	import type { BoardEquity, BoardQuery } from '$lib/types/ranges';
-	import { type Card, makeCard } from '$lib/utils/cards';
+	import {
+		clearHole,
+		hasHole,
+		holeCards,
+		inPlay,
+		randomFlop,
+		setBoard,
+		slots
+	} from '$lib/stores/cards.store';
+	import { makeCard } from '$lib/utils/cards';
 	import { holeToHand } from '$lib/utils/hands';
 	import CardSelect from './CardSelect.svelte';
 	import EquityChart from './EquityChart.svelte';
@@ -25,19 +34,6 @@
 	let otherPick = $state('BB');
 	let side = $state<'opener' | 'other'>('other');
 	// Flop, turn, river. The turn and river are optional; a later card only counts if the ones before it are set.
-	// One pool of seven slots: flop, turn, river, then your two cards. The deck is shared, so a card
-	// can only be in one place.
-	let slots = $state<(Card | null)[]>([
-		makeCard(14, 0),
-		makeCard(7, 2),
-		makeCard(2, 3),
-		null,
-		null,
-		null,
-		null
-	]);
-	const board = $derived(slots.slice(0, 5));
-	const hole = $derived(slots.slice(5, 7));
 	let bet = $state<number | null>(null);
 
 	const POTS: { id: Pot; label: string }[] = [
@@ -76,25 +72,15 @@
 				: `${opener} opened, ${other} 3-bet, ${opener} 4-bet, ${other} called.`
 	);
 
-	/** The cards in play: the flop and, in order, the turn and river if they are set. */
-	const inPlay = $derived.by(() => {
-		const cards: Card[] = [];
-		for (const card of board) {
-			if (card === null) break;
-			cards.push(card);
-		}
-		return cards;
-	});
-
 	const query = $derived.by((): BoardQuery | null => {
-		if (!opener || !other || inPlay.length < 3) return null;
+		if (!opener || !other || $inPlay.length < 3) return null;
 		return {
 			pot,
 			opener,
 			other,
 			side,
-			board: inPlay,
-			hole: hole.every((c) => c !== null) ? (hole as Card[]) : null,
+			board: $inPlay,
+			hole: $holeCards,
 			bet,
 			view: 'mine'
 		};
@@ -123,26 +109,6 @@
 	$effect(() => {
 		if (fresh) last = fresh;
 	});
-
-	function setBoard(cards: Card[]) {
-		// A card on the new flop cannot also be in your hand.
-		slots = [
-			...cards,
-			null,
-			null,
-			...hole.map((c) => (c !== null && cards.includes(c) ? null : c))
-		];
-	}
-
-	function randomFlop() {
-		const taken = new Set(hole.filter((c): c is Card => c !== null));
-		const deck = Array.from({ length: 52 }, (_, i) => i).filter((c) => !taken.has(c));
-		const picked: Card[] = [];
-		while (picked.length < 3) {
-			picked.push(...deck.splice(Math.floor(Math.random() * deck.length), 1));
-		}
-		slots = [...picked, null, null, ...hole];
-	}
 
 	const pct = (v: number, digits = 1) => `${(v * 100).toFixed(digits)}%`;
 	const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v * 100).toFixed(1)}`;
@@ -241,15 +207,13 @@
 						>
 					{/each}
 					<button class="chip small" onclick={randomFlop}>Random</button>
-					{#if hole.some((c) => c !== null)}
-						<button class="chip small" onclick={() => (slots = [...board, null, null])}
-							>Clear hand</button
-						>
+					{#if $hasHole}
+						<button class="chip small" onclick={clearHole}>Clear hand</button>
 					{/if}
 				</div>
 			</div>
 			<CardSelect
-				bind:cards={slots}
+				bind:cards={$slots}
 				name="Cards"
 				labels={['Flop 1', 'Flop 2', 'Flop 3', 'Turn', 'River', 'Hand 1', 'Hand 2']}
 				groups={[

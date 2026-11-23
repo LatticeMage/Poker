@@ -20,7 +20,10 @@ const config = {
 			strict: true
 		}),
 
-		appDir: '_app'
+		appDir: '_app',
+
+		// GitHub Pages serves a project site under /<repo>; the build sets BASE_PATH for that.
+		paths: { base: process.env.BASE_PATH ?? '' }
 	}
 };
 

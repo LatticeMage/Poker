@@ -1,0 +1,14 @@
+services:
+  poker:
+    build: .
+    # Dev server with hot module replacement; the source is bind-mounted.
+    command: npm run dev
+    environment:
+      NGX_PORT: 15173
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "15173:15173"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    restart: unless-stopped

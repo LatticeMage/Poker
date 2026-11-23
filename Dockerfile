@@ -7,14 +7,15 @@ WORKDIR /app
 RUN chown node:node /app
 USER node
 
-# Install dependencies
+ARG BASE_PATH=""
+ENV BASE_PATH=$BASE_PATH
+
 COPY --chown=node:node package*.json .npmrc ./
 RUN npm install
 
-# Copy all files to the container
 COPY --chown=node:node . .
 
+# The static site ends up in /app/build (the CI workflow copies it out).
 RUN npm run build
 
-# Start the application
 CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "3000"]

@@ -45,8 +45,8 @@ const pushFoldMix = pushFoldMixData as Record<
  * open only some of the time, and the best hands just outside it open a little. The edge is
  * smoothed that way here while the total share of hands that open stays what the chart says.
  */
-const EDGE_SHARE = 0.12; // the weakest 12% of the opening combos are mixed
-const OUTSIDE_HANDS = 14; // how many hands beyond the edge get a small share
+const EDGE_SHARE = 0.4; // the weakest 40% of the opening combos are mixed
+const OUTSIDE_HANDS = 30; // how many hands beyond the edge get a small share
 
 function openMix(hands: Iterable<string>): Record<string, number> {
 	const inside = new Set(hands);
@@ -61,7 +61,7 @@ function openMix(hands: Iterable<string>): Record<string, number> {
 	for (let i = members.length - 1; i >= 0 && edge < EDGE_SHARE * total; i--) {
 		const h = members[i];
 		const rank = edge / (EDGE_SHARE * total); // 0 at the very edge ... 1 deeper in
-		const f = 0.3 + 0.65 * rank;
+		const f = 0.15 + 0.85 * rank ** 1.5;
 		mix[h] = Math.round(f * 100) / 100;
 		deficit += combos(h) * (1 - mix[h]);
 		edge += combos(h);
@@ -140,6 +140,69 @@ export function spotList(): SpotList {
 }
 
 /** Strategy for one spot: facing an open raise, or facing a 3-bet after opening (6-max, ~100bb). */
+const RANKS = '23456789TJQKA';
+
+/** Hands next to this one in the 13x13 grid (same suitedness, one rank apart). */
+function gridNeighbours(hand: string): string[] {
+	const hi = RANKS.indexOf(hand[0]);
+	const lo = RANKS.indexOf(hand[1]);
+	const kind = hand[2] ?? '';
+	const out: string[] = [];
+	const add = (a: number, b: number) => {
+		if (a < 0 || b < 0 || a > 12 || b > 12) return;
+		if (kind === '') {
+			if (a === b) out.push(RANKS[a] + RANKS[b]);
+		} else if (a > b) out.push(RANKS[a] + RANKS[b] + kind);
+	};
+	if (kind === '') {
+		add(hi + 1, hi + 1);
+		add(hi - 1, hi - 1);
+	} else {
+		add(hi + 1, lo);
+		add(hi - 1, lo);
+		add(hi, lo + 1);
+		add(hi, lo - 1);
+	}
+	return out;
+}
+
+/**
+ * The sources list who raises or calls with what, mostly as all-or-nothing hands. A solver mixes near
+ * the edges, so a hand that is pure in the source takes on part of its neighbours' share of the
+ * action. Cells the source already mixes are left alone, and the action's total combos are kept.
+ */
+function softenEdges(weights: spots.Weights): spots.Weights {
+	const SPREAD = 0.45;
+	const hands = [...ORDER];
+	const before = hands.map((h) => weights[h] ?? 0);
+	const total = hands.reduce((n, h, i) => n + before[i] * combos(h), 0);
+	if (total === 0) return { ...weights };
+	const index = new Map(hands.map((h, i) => [h, i]));
+	const next = hands.map((h, i) => {
+		const f = before[i];
+		if (f > 0 && f < 1) return f;
+		const around = gridNeighbours(h).map((n) => before[index.get(n)!]);
+		const mean = around.reduce((a, b) => a + b, 0) / (around.length || 1);
+		return f + SPREAD * (mean - f);
+	});
+	const mass = hands.reduce((n, h, i) => n + next[i] * combos(h), 0);
+	const out: spots.Weights = {};
+	hands.forEach((h, i) => {
+		const f = Math.round(Math.min(1, (next[i] * total) / mass) * 100) / 100;
+		if (f >= 0.02) out[h] = f;
+	});
+	return out;
+}
+
+/** Every hand's call + raise shares add up to at most 1 (the rest folds). */
+function fitToOne(call: spots.Weights, bluff: spots.Weights, value: spots.Weights) {
+	for (const h of new Set([...Object.keys(call), ...Object.keys(bluff), ...Object.keys(value)])) {
+		const sum = (call[h] ?? 0) + (bluff[h] ?? 0) + (value[h] ?? 0);
+		if (sum <= 1) continue;
+		for (const w of [call, bluff, value]) if (w[h]) w[h] = Math.round((w[h] / sum) * 100) / 100;
+	}
+}
+
 export function spotChart(kind: SpotChart['kind'], hero: string, villain: string): SpotChart {
 	const key = `${hero}|${villain}`;
 	let call: spots.Weights;
@@ -173,6 +236,10 @@ export function spotChart(kind: SpotChart['kind'], hero: string, villain: string
 		note = `${hero} opened and ${villain} 3-bet.`;
 	}
 	if (!stated) throw new ChartError('No chart for this spot');
+	call = softenEdges(softenEdges(call));
+	bluff = softenEdges(softenEdges(bluff));
+	value = softenEdges(softenEdges(value));
+	fitToOne(call, bluff, value);
 	return {
 		kind,
 		hero,

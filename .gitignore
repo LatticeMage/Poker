@@ -1,0 +1,9 @@
+node_modules
+.svelte-kit
+build
+.env
+.env.*
+!.env.example
+# third-party reference bundles studied for this project
+application-*.js
+application-*.css

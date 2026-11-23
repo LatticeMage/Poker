@@ -1,0 +1,79 @@
+{
+	"charts": [
+		{
+			"key": "UTG9",
+			"label": "9-max UTG",
+			"stated_pct": 10.6,
+			"url": "https://www.pokerskill.com/charts/opening-ranges/",
+			"text": "77+, ATs+, A5s-A3s, KTs+, QJs, AJo+, KQo"
+		},
+		{
+			"key": "UTG6",
+			"label": "6-max UTG",
+			"stated_pct": 14.3,
+			"url": "https://www.pokerskill.com/charts/opening-ranges/",
+			"text": "22+, ATs+, A5s-A2s, KTs+, QTs+, JTs, T9s, 98s, AJo+, KQo"
+		},
+		{
+			"key": "MP9",
+			"label": "9-max middle position",
+			"stated_pct": 14.8,
+			"url": "https://www.pokerskill.com/charts/opening-ranges/",
+			"text": "55+, A9s+, A5s-A2s, KTs+, QTs+, JTs, T9s, ATo+, KJo+"
+		},
+		{
+			"key": "HJ6",
+			"label": "6-max HJ",
+			"stated_pct": 18.9,
+			"url": "https://www.pokerskill.com/charts/opening-ranges/",
+			"text": "22+, A2s+, K9s+, Q9s+, J9s+, T8s+, 98s, 87s, ATo+, KJo+"
+		},
+		{
+			"key": "CO6",
+			"label": "6-max CO",
+			"stated_pct": 25.5,
+			"url": "https://www.pokerskill.com/charts/opening-ranges/",
+			"text": "22+, A2s+, K5s+, Q8s+, J8s+, T8s+, 97s+, 87s, 76s, 65s, 54s, A8o+, KTo+, QJo"
+		},
+		{
+			"key": "SB6",
+			"label": "6-max SB",
+			"stated_pct": 33.0,
+			"url": "https://www.pokerskill.com/charts/opening-ranges/",
+			"text": "22+, A2s+, K4s+, Q6s+, J7s+, T7s+, 96s+, 86s+, 76s, 65s, 54s, A5o+, K9o+, QTo+, JTo"
+		},
+		{
+			"key": "BTN6",
+			"label": "6-max BTN",
+			"stated_pct": 43.3,
+			"url": "https://www.pokerskill.com/charts/opening-ranges/",
+			"text": "22+, A2s+, K2s+, Q4s+, J6s+, T6s+, 95s+, 85s+, 75s+, 64s+, 54s, A2o+, K8o+, Q9o+, J9o+, T9o, 98o"
+		},
+		{
+			"key": "BBDEF",
+			"label": "6-max BB defending vs BTN",
+			"stated_pct": 52.3,
+			"url": "https://www.pokerskill.com/charts/opening-ranges/",
+			"text": "22+, A2s+, K2s+, Q2s+, J4s+, T6s+, 95s+, 85s+, 74s+, 64s+, 53s+, A2o+, K5o+, Q8o+, J8o+, T8o+, 97o+, 87o"
+		},
+		{
+			"key": "PSBTN",
+			"label": "PokerStrategy 6-max BTN",
+			"stated_pct": 62.0,
+			"url": "https://www.pokerstrategy.com/strategy/bss/no-limit-6-max-preflop-ranges/",
+			"text": "22+, A2s+, K2s+, Q2s+, J3s+, T3s+, 94s+, 84s+, 73s+, 63s+, 53s+, 43s, A2o+, K5o+, Q7o+, J7o+, T6o+, 96o+, 86o+, 76o, 65o"
+		}
+	],
+	"layers": ["UTG9", "UTG6", "MP9", "HJ6", "CO6", "SB6", "BTN6", "BBDEF", "PSBTN"],
+	"chart_by_behind": {
+		"8": "UTG9",
+		"5": "UTG6",
+		"4": "HJ6",
+		"3": "CO6",
+		"2": "BTN6"
+	},
+	"computed_pct": {
+		"7": 12.5,
+		"6": 13.5
+	}
+}

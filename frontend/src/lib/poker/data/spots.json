@@ -1,0 +1,201 @@
+{
+	"lesson": {
+		"UTG": 2253,
+		"MP": 2254,
+		"CO": 2255,
+		"BTN": 2256,
+		"SB": 2257,
+		"BB": 2258
+	},
+	"open_size": {
+		"UTG": 3.0,
+		"MP": 3.0,
+		"CO": 2.5,
+		"BTN": 2.0,
+		"SB": 3.0
+	},
+	"vs_open": {
+		"MP|UTG": {
+			"call": "AsAc, KdKh, KdKs, KdKc, QQ-88, AQs+, KQs, AKo",
+			"bluff": "AJs, T9s, 98s, 87s, AQo",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc",
+			"stated": [58, 28, 8]
+		},
+		"CO|UTG": {
+			"call": "AsAc, KdKh, KdKs, KdKc, QQ-66, AQs+, KQs, QJs, JTs, T9s, 98s, AKo",
+			"bluff": "AQo, AJs",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc",
+			"stated": [86, 16, 8]
+		},
+		"CO|MP": {
+			"call": "AsAc, KdKh, KdKs, KdKc, JJ-66, ATs+, KTs+, QTs+, JTs, T9s, 98s, AQo",
+			"bluff": "87s, 76s, 65s, AJo, KJo+",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, QQ, AKo",
+			"stated": [100, 48, 26]
+		},
+		"BTN|UTG": {
+			"call": "JJ-55, AsAc, KdKh, KdKs, KdKc, QdQh, QdQs, QdQc, AJs+, KQs, JTs-98s, AdKh, AdKs, AdKc, AhKs, AhKc, AsKc",
+			"bluff": "87s, 76s, 65s, AQo, KQo",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, QhQs, QhQc, QsQc, AhKd, AsKd, AsKh, AcKd, AcKh, AcKs",
+			"stated": [83, 36, 17]
+		},
+		"BTN|MP": {
+			"call": "JJ-55, AsAc, KdKh, KdKs, KdKc, AJs+, KQ, QJs, JTs, T9s, 98s, AQo",
+			"bluff": "ATs, KJs, J9s, T8s, 97s, 87s, 76s, AJo, KJo",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, QQ, AKo",
+			"stated": [102, 52, 26]
+		},
+		"BTN|CO": {
+			"call": "99-55, AsAc, KdKh, KdKs, KdKc, AQs-A9s, K9s+, Q9s+, J9s+, T8s+, 97s+, 87s, AJo, KJo+, QJo",
+			"bluff": "A5s-A2s, K8s, Q8s, J8s, T7s, 96s, 86s, 76s, 65s, 54s, ATo",
+			"value": "QQ-TT, AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AKs, AQo+",
+			"stated": [154, 64, 54]
+		},
+		"SB|UTG": {
+			"call": "QQ-88, AQs+, AKo",
+			"bluff": "AQo, KQs",
+			"value": "KK+",
+			"stated": [50, 16, 12]
+		},
+		"SB|MP": {
+			"call": "QQ-77, AQs+, KQs, JTs, T9s, AKo",
+			"bluff": "AQo, KQo",
+			"value": "KK+",
+			"stated": [68, 24, 12]
+		},
+		"SB|CO": {
+			"call": "99-66, AsAc, KdKh, KdKs, KdKc, AQs-AJs, KJs+, QJs, JTs, T9s, 98s, AJo, KQo",
+			"bluff": "ATs, A5s-A2s, KTs, QTs, J9s, T8s, 97s, 86s+, 76s, KJo",
+			"value": "QQ-TT, AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AKs, AQo+",
+			"stated": [84, 64, 54]
+		},
+		"SB|BTN": {
+			"call": "99-66, AsAc, KdKh, KdKs, KdKc, AQs-ATs, KTs+, QTs+, JTs, T9s, 98s, 87s, 76s, AJo-ATo, KJo+, QJo",
+			"bluff": "A9s, A5s-A2s, K9s, Q9s, J9s, T8s, 97s, 86s, 75s, 65s, KTo, QTo",
+			"value": "QQ-TT, AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AKs, AQo+",
+			"stated": [140, 76, 54]
+		},
+		"BB|UTG": {
+			"call": "QQ-77, AQs+, KQs, JTs, T9s, AQo+",
+			"bluff": "AJs, KQo",
+			"value": "KK+",
+			"stated": [80, 16, 12]
+		},
+		"BB|MP": {
+			"call": "QQ-66, AJs+, KQs, JTs, T9s, AQo+, KQo",
+			"bluff": "KJs, AJo",
+			"value": "KK+",
+			"stated": [102, 16, 12]
+		},
+		"BB|CO": {
+			"call": "AsAc, KdKh, KdKs, KdKc, 99-55, AQs-A2s, K8s+, Q9s+, J9s+, T8s+, 97s+, 87s, AJo-ATo, KTo+, QJo",
+			"bluff": "K7s-K6s, Q8s, J8s, T7s, 86s, 76s, 65s, A9o, QTo, JTo, AQo",
+			"value": "QQ-TT, AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AK",
+			"stated": [210, 80, 42]
+		},
+		"BB|BTN": {
+			"call": "AsAc, KdKh, KdKs, KdKc, 99-22, AJs-A2s, K2s+, Q2s+, J6s+, T6s+, 96s+, 85s+, 75s+, 64s+, 54s, AJo-A2o, K7o+, Q7o+, J7o+, T8o+, 98o",
+			"bluff": "J5s-J4s, T5s-T4s, 95s-94s, 84s, 74s, 63s, 53s, 43s, K6o, Q6o, T7o, 97o, 87o, 76o",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, QQ-TT, AQ+",
+			"stated": [592, 116, 58]
+		},
+		"BB|SB": {
+			"call": "AsAc, KdKh, KdKs, KdKc, 99-22, AQs-A2s, K7s+, Q7s+, J7s+, T7s+, 97s+, 86s+, 75s+, 64s+, 54s, AQo-A7o, K8o+, Q8o+, J8o+, T8o+, 98o",
+			"bluff": "K6s-K2s, Q6s-Q2s, A6o-A2o, K7o-K6o, Q7o-Q6o",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AK, QQ-TT",
+			"stated": [456, 148, 42]
+		}
+	},
+	"vs_3bet": {
+		"UTG|MP": {
+			"call": "AsAc, KdKh, KdKs, KdKc, AhKd, AsKd, AsKh, AcKd, AcKh, AcKs, QQ-JJ, AQs+, KQs",
+			"bluff": "AQo, KQo",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AdKh, AdKs, AdKc, AhKs, AhKc, AsKc",
+			"stated": [34, 24, 14]
+		},
+		"UTG|CO": {
+			"call": "AsAc, KdKh, KdKs, KdKc, AdKh, AdKs, AdKc, AhKs, AhKc, AsKc, QQ-TT, AQs+, KQs",
+			"bluff": "AJs, AQo, KQo",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AhKd, AsKd, AsKh, AcKd, AcKh, AcKs",
+			"stated": [40, 28, 14]
+		},
+		"UTG|BTN": {
+			"call": "QQ-TT, AsAc, KdKh, KdKs, KdKc, AQs+, KQs, AdKh, AdKs, AdKc, AhKs, AhKc, AsKc",
+			"bluff": "AJs, AQo, KQo",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AhKd, AsKd, AsKh, AcKd, AcKh, AcKs",
+			"stated": [40, 28, 14]
+		},
+		"UTG|SB": {
+			"call": "AsAc, KdKh, KdKs, KdKc, QQ-JJ, AQs+, AKo",
+			"bluff": "AQo",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc",
+			"stated": [36, 12, 8]
+		},
+		"UTG|BB": {
+			"call": "TT+, AQs+, KQs, QJs, JTs, AKo",
+			"bluff": "AQo",
+			"value": "",
+			"stated": [62, 12, 0]
+		},
+		"MP|CO": {
+			"call": "AsAc, KdKh, KdKs, KdKc, QQ-TT, AQs, KQs",
+			"bluff": "AJs, AQo-AJo, KQo",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AK",
+			"stated": [30, 40, 24]
+		},
+		"MP|BTN": {
+			"call": "AsAc, KdKh, KdKs, KdKc, QQ-TT, AQs, KQs",
+			"bluff": "AJs, AQo-AJo, KQo",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AK",
+			"stated": [30, 40, 24]
+		},
+		"MP|SB": {
+			"call": "AsAc, KdKh, KdKs, KdKc, AhKd, AsKd, AsKh, AcKd, AcKh, AcKs, QQ-TT, AQs+, KQs",
+			"bluff": "AQo, KQo",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AdKh, AdKs, AdKc, AhKs, AhKc, AsKc",
+			"stated": [40, 24, 14]
+		},
+		"MP|BB": {
+			"call": "TT+, AQs+, JTs, AKo",
+			"bluff": "KQs",
+			"value": "",
+			"stated": [54, 4, 0]
+		},
+		"CO|BTN": {
+			"call": "AsAc, KdKh, KdKs, KdKc, QQ, AJs+, KJs+, QJs, JTs, AQo",
+			"bluff": "ATs, KTs, AJo, KJo+",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AKo, JJ-TT",
+			"stated": [50, 44, 32]
+		},
+		"CO|SB": {
+			"call": "AsAc, KdKh, KdKs, KdKc, TT-88, ATs+, KTs+, QTs+, JTs, T9s, 98s, AQo-AJo, KQo",
+			"bluff": "A9s, K9s, ATo, KJo, QJo",
+			"value": "AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AKo, QQ-JJ",
+			"stated": [106, 44, 32]
+		},
+		"CO|BB": {
+			"call": "QQ, TT-77, AsAc, KdKh, KdKs, KdKc, ATs+, KTs+, QTs+, JTs-87s, AQo-AJo, KQo",
+			"bluff": "ATo, KJo, QJo",
+			"value": "JJ, AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AKo",
+			"stated": [122, 36, 26]
+		},
+		"BTN|SB": {
+			"call": "TT-77, AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AQs-ATs, A5s-A2s, KTs+, QTs+, J9s+, T8s+, 97s+, 87s, 76s, AQo-AJo, KQo",
+			"bluff": "ATo, KJo-KTo, QJo",
+			"value": "QQ-JJ, AsAc, KdKh, KdKs, KdKc, AKs, AKo",
+			"stated": [148, 48, 32]
+		},
+		"BTN|BB": {
+			"call": "TT-77, AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, AQs-ATs, A5s-A2s, KTs+, QTs+, J9s+, T8s+, 97s+, 87s, 76s, AQo-AJo, KQo",
+			"bluff": "ATo, KJo-KTo, QJo",
+			"value": "QQ-JJ, AsAc, KdKh, KdKs, KdKc, AKs, AKo",
+			"stated": [148, 48, 32]
+		},
+		"SB|BB": {
+			"call": "AsAc, KdKh, KdKs, KdKc, QdQh, QdQs, QdQc, AQs-AJs, KJs+, QJs, JTs, T9s, 98s, AQo, KQo",
+			"bluff": "ATs-A9s, KTs, QTs, AJo, KJo, QJo",
+			"value": "JJ-TT, AdAh, AdAs, AhAs, AdAc, AhAc, KhKs, KhKc, KsKc, QhQs, QhQc, QsQc, AKs, AKo",
+			"stated": [63, 52, 39]
+		}
+	}
+}

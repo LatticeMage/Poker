@@ -73,3 +73,10 @@ export function loadBoard(q: BoardQuery): Promise<void> {
 		rangeStore.boards = { ...rangeStore.boards, [key]: charts.boardEquity(q) };
 	});
 }
+
+export function loadHeadsUp(stackBb: number): Promise<void> {
+	if (rangeStore.headsUp[stackBb]) return Promise.resolve();
+	return load(() => {
+		rangeStore.headsUp = { ...rangeStore.headsUp, [stackBb]: charts.headsUpChart(stackBb) };
+	});
+}

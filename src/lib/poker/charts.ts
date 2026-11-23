@@ -3,6 +3,7 @@
 
 import type {
 	BoardEquity,
+	HeadsUpChart,
 	BoardQuery,
 	PushFoldChart,
 	RangeChart,
@@ -10,6 +11,10 @@ import type {
 	SpotList
 } from '$lib/types/ranges';
 import type { Card } from './cards';
+import headsUp10 from './data/headsup-10.json';
+import headsUp20 from './data/headsup-20.json';
+import headsUp40 from './data/headsup-40.json';
+import headsUp80 from './data/headsup-80.json';
 import pushFoldMixData from './data/pushfold-mix.json';
 import { evaluate } from './evaluate';
 import * as postflop from './postflop';
@@ -423,4 +428,21 @@ export function boardEquity(q: BoardQuery): BoardEquity {
 			'6-max preflop charts, ~100bb. Equity is all-in equity to the river; the opponent is assumed to ' +
 			'hold their whole preflop range.'
 	};
+}
+
+const HEADS_UP: Record<number, HeadsUpChart> = {
+	10: headsUp10 as unknown as HeadsUpChart,
+	20: headsUp20 as unknown as HeadsUpChart,
+	40: headsUp40 as unknown as HeadsUpChart,
+	80: headsUp80 as unknown as HeadsUpChart
+};
+
+/** Stack depths with a solved heads-up preflop tree. */
+export const HEADS_UP_STACKS = Object.keys(HEADS_UP).map(Number);
+
+/** The solved heads-up preflop tree (small blind vs big blind) for one stack depth. */
+export function headsUpChart(stackBb: number): HeadsUpChart {
+	const chart = HEADS_UP[stackBb];
+	if (!chart) throw new ChartError(`No heads-up chart for ${stackBb}bb`);
+	return chart;
 }

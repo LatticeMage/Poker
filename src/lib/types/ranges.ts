@@ -157,3 +157,25 @@ export interface BoardQuery {
 	bet: number | null;
 	view: 'mine' | 'theirs';
 }
+
+/** One decision in the solved heads-up preflop tree. */
+export interface HeadsUpNode {
+	/** Who acts: the small blind (button) or the big blind. */
+	player: 'SB' | 'BB';
+	/** "fold", "call", "limp", "check", "raise 2.5", "allin"... */
+	actions: string[];
+	/** Share of all hands that reach this decision (0-1). */
+	reach: number;
+	/** Per hand: the share of each action, in the order of `actions`. Hands that never get here are absent. */
+	freq: Record<string, number[]>;
+}
+
+export interface HeadsUpChart {
+	stack_bb: number;
+	iterations: number;
+	samples_per_matchup: number;
+	/** What a best response still wins against the averaged strategy, in big blinds. */
+	exploitability_bb: number;
+	/** Keyed by the path to the decision, e.g. "root", "open/2.5", "open/2.5/9". */
+	nodes: Record<string, HeadsUpNode>;
+}

@@ -39,6 +39,8 @@
 	let cursor = $state(0);
 
 	const mine = $derived(new Set(cards.filter((c): c is Card => c !== null)));
+	/** Cards that cannot be picked: used in another place, or already in a slot. */
+	const gone = $derived(new Set([...blocked, ...mine]));
 
 	function put(card: Card) {
 		cards[cursor] = card;
@@ -96,9 +98,9 @@
 						class="deck-card"
 						class:red={isRed(card)}
 						class:taken={mine.has(card)}
-						class:gone={blocked.has(card) || (mine.has(card) && cards[cursor] !== card)}
-						disabled={blocked.has(card) || (mine.has(card) && cards[cursor] !== card)}
-						tabindex={blocked.has(card) || (mine.has(card) && cards[cursor] !== card) ? -1 : 0}
+						class:gone={gone.has(card)}
+						disabled={gone.has(card)}
+						tabindex={gone.has(card) ? -1 : 0}
 						aria-label={cardName(card)}
 						onclick={() => put(card)}
 					>

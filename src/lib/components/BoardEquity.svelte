@@ -20,7 +20,7 @@
 		setBoard,
 		slots
 	} from '$lib/stores/cards.store';
-	import { makeCard } from '$lib/utils/cards';
+	import { type Card, makeCard } from '$lib/utils/cards';
 	import { holeToHand } from '$lib/utils/hands';
 	import CardSelect from './CardSelect.svelte';
 	import EquityChart from './EquityChart.svelte';

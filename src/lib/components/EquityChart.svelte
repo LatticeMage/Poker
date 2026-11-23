@@ -39,14 +39,24 @@
 	const x = (p: number) => LEFT + p * (W - LEFT - RIGHT);
 	const y = (e: number) => TOP + (1 - e) * (H - TOP - BOTTOM);
 
-	/** The curve, extended to both edges so it spans the whole axis. */
-	function path(values: number[]): string {
-		if (values.length === 0) return '';
-		const points: [number, number][] = [
-			[0, values[0]],
-			...values.map((e, i): [number, number] => [(i + 0.5) / values.length, e]),
-			[1, values[values.length - 1]]
-		];
+	/**
+	 * The line. When the hand classes are known it runs through them, so every dot sits exactly on
+	 * its line; otherwise it falls back to the evenly spread sample values.
+	 */
+	function path(values: number[], hands: CurveHand[]): string {
+		const points: [number, number][] = hands.length
+			? [
+					[0, hands[0].equity],
+					...hands.map((h): [number, number] => [h.percentile, h.equity]),
+					[1, hands[hands.length - 1].equity]
+				]
+			: values.length
+				? [
+						[0, values[0]],
+						...values.map((e, i): [number, number] => [(i + 0.5) / values.length, e]),
+						[1, values[values.length - 1]]
+					]
+				: [];
 		return points
 			.map(([p, e], i) => `${i === 0 ? 'M' : 'L'}${x(p).toFixed(1)},${y(e).toFixed(1)}`)
 			.join(' ');
@@ -97,8 +107,9 @@
 	// The arrow comes from below the point unless there is no room, then from above.
 	const arrow = $derived.by(() => {
 		if (!hand) return null;
-		const px = x(hand.percentile);
-		const py = y(hand.equity);
+		const onLine = mineHands.find((h) => h.hand === hand.name);
+		const px = x(onLine ? onLine.percentile : hand.percentile);
+		const py = y(onLine ? onLine.equity : hand.equity);
 		const below = py < H - BOTTOM - 46;
 		const dir = below ? 1 : -1;
 		const tipY = py + dir * 6;
@@ -172,7 +183,7 @@
 
 		<!-- the two distributions -->
 		<path
-			d={path(theirs)}
+			d={path(theirs, theirHands)}
 			fill="none"
 			stroke="#38bdf8"
 			opacity="0.55"
@@ -181,7 +192,7 @@
 			data-line="them"
 		/>
 		<path
-			d={path(mine)}
+			d={path(mine, mineHands)}
 			fill="none"
 			stroke="#f59e0b"
 			opacity="0.55"

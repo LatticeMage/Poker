@@ -137,7 +137,13 @@
 	const youLabel = $derived(side === 'opener' ? opener : other);
 	const themLabel = $derived(side === 'opener' ? other : opener);
 	const handPoint = $derived(
-		result?.known ? { percentile: 1 - result.known.rank, equity: result.known.equity } : null
+		result?.known
+			? {
+					percentile: 1 - result.known.rank,
+					equity: result.known.equity,
+					name: result.known.hand
+				}
+			: null
 	);
 </script>
 
@@ -312,6 +318,8 @@
 				<EquityChart
 					mine={result.unknown.my_curve}
 					theirs={result.unknown.their_curve}
+					mineHands={result.unknown.my_hands}
+					theirHands={result.unknown.their_hands}
 					hand={handPoint}
 					mineLabel={`${youLabel} (you)`}
 					theirLabel={themLabel}

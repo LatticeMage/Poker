@@ -3,21 +3,28 @@
 	range (its weakest hands on the left, its strongest on the right); the y axis is the equity those
 	hands have against the other player's range. Where one line sits above the other is where that
 	player is ahead; a steep right end means a strong top of the range (many nuts), a high left end a
-	range with few weak hands. A dot marks your own hand when you know it.
+	range with few weak hands. Every hand class is a small dot on its line; an arrow points at your own hand when you know it.
 -->
 
 <script lang="ts">
+	import type { CurveHand } from '$lib/types/ranges';
+
 	let {
 		mine,
 		theirs,
+		mineHands = [],
+		theirHands = [],
 		hand = null,
 		mineLabel = 'You',
 		theirLabel = 'Them'
 	}: {
 		mine: number[];
 		theirs: number[];
-		/** Where your hand sits: percentile (0 weakest .. 1 strongest) and its equity. */
-		hand?: { percentile: number; equity: number } | null;
+		/** Every hand class of each range (one dot each); optional. */
+		mineHands?: CurveHand[];
+		theirHands?: CurveHand[];
+		/** Where your hand sits: percentile (0 weakest .. 1 strongest), its equity and its name. */
+		hand?: { percentile: number; equity: number; name?: string } | null;
 		mineLabel?: string;
 		theirLabel?: string;
 	} = $props();
@@ -47,6 +54,64 @@
 
 	const average = (values: number[]) =>
 		values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+	type Dot = CurveHand & { side: 'you' | 'them'; sideLabel: string; key: string };
+	const dots = $derived<Dot[]>([
+		...theirHands.map((h) => ({
+			...h,
+			side: 'them' as const,
+			sideLabel: theirLabel,
+			key: `t-${h.hand}`
+		})),
+		...mineHands.map((h) => ({
+			...h,
+			side: 'you' as const,
+			sideLabel: mineLabel,
+			key: `y-${h.hand}`
+		}))
+	]);
+	const describe = (d: Dot) =>
+		`${d.hand}, ${d.sideLabel}: ${pct(d.equity)} equity, ${(d.weight * 100).toFixed(1)}% of the range`;
+
+	/** The dot whose tooltip is open (hover, keyboard focus or tap). */
+	let active = $state<string | null>(null);
+	let pinned = $state<string | null>(null);
+	const shown = $derived(dots.find((d) => d.key === (active ?? pinned)) ?? null);
+	const tip = $derived.by(() => {
+		if (!shown) return null;
+		const lines = [
+			`${shown.hand} · ${shown.sideLabel}`,
+			`${(shown.equity * 100).toFixed(1)}% equity · ${(shown.weight * 100).toFixed(1)}% of range`
+		];
+		const w = Math.max(...lines.map((l) => l.length)) * 5.6 + 14;
+		const h = 34;
+		const cx = x(shown.percentile);
+		const cy = y(shown.equity);
+		const tx = Math.min(Math.max(cx - w / 2, 2), W - w - 2);
+		const ty = cy - h - 9 < 2 ? cy + 10 : cy - h - 9;
+		return { lines, w, h, tx, ty };
+	});
+	function toggle(key: string) {
+		pinned = pinned === key ? null : key;
+	}
+
+	// The arrow comes from below the point unless there is no room, then from above.
+	const arrow = $derived.by(() => {
+		if (!hand) return null;
+		const px = x(hand.percentile);
+		const py = y(hand.equity);
+		const below = py < H - BOTTOM - 46;
+		const dir = below ? 1 : -1;
+		const tipY = py + dir * 6;
+		const tailY = py + dir * 34;
+		return {
+			px,
+			tipY,
+			tailY,
+			labelY: tailY + dir * (below ? 11 : 4),
+			anchor: px > W - 70 ? 'end' : px < LEFT + 30 ? 'start' : 'middle',
+			d: `M${px},${tailY} L${px},${tipY + dir * 2} M${px - 5},${tipY + dir * 8} L${px},${tipY} L${px + 5},${tipY + dir * 8}`
+		};
+	});
 	const ticks = [0, 0.25, 0.5, 0.75, 1];
 	const pct = (v: number) => `${Math.round(v * 100)}%`;
 </script>
@@ -110,7 +175,8 @@
 			d={path(theirs)}
 			fill="none"
 			stroke="#38bdf8"
-			stroke-width="2.5"
+			opacity="0.55"
+			stroke-width="2"
 			stroke-linejoin="round"
 			data-line="them"
 		/>
@@ -118,26 +184,92 @@
 			d={path(mine)}
 			fill="none"
 			stroke="#f59e0b"
-			stroke-width="2.5"
+			opacity="0.55"
+			stroke-width="2"
 			stroke-linejoin="round"
 			data-line="you"
 		/>
 
-		<!-- your own hand -->
-		{#if hand}
-			<circle
-				cx={x(hand.percentile)}
-				cy={y(hand.equity)}
-				r="5.5"
-				fill="#f8fafc"
-				stroke="#f59e0b"
-				stroke-width="2.5"
+		<!-- every hand class, one dot on its own line -->
+		<g role="group" aria-label="Hands in each range">
+			{#each dots as d (d.key)}
+				<circle
+					cx={x(d.percentile)}
+					cy={y(d.equity)}
+					r={shown?.key === d.key ? 3.6 : 2}
+					fill={d.side === 'you' ? '#f59e0b' : '#38bdf8'}
+					stroke="#0f172a"
+					stroke-width="0.6"
+					tabindex="0"
+					role="button"
+					aria-label={describe(d)}
+					data-dot={d.side}
+					data-hand={d.hand}
+					class="cursor-pointer outline-none"
+					onmouseenter={() => (active = d.key)}
+					onmouseleave={() => (active = null)}
+					onfocus={() => (active = d.key)}
+					onblur={() => (active = null)}
+					onclick={() => toggle(d.key)}
+					onkeydown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							toggle(d.key);
+						} else if (e.key === 'Escape') pinned = null;
+					}}
+				>
+					<title>{describe(d)}</title>
+				</circle>
+			{/each}
+		</g>
+
+		{#if tip && shown}
+			<g pointer-events="none" aria-hidden="true" data-testid="dot-tip">
+				<rect
+					x={tip.tx}
+					y={tip.ty}
+					width={tip.w}
+					height={tip.h}
+					rx="4"
+					fill="#0f172a"
+					stroke={shown.side === 'you' ? '#f59e0b' : '#38bdf8'}
+				/>
+				<text x={tip.tx + 7} y={tip.ty + 14} font-size="10.5" font-weight="700" fill="#f8fafc"
+					>{tip.lines[0]}</text
+				>
+				<text x={tip.tx + 7} y={tip.ty + 27} font-size="10" fill="#cbd5e1">{tip.lines[1]}</text>
+			</g>
+		{/if}
+
+		<!-- your own hand: an arrow pointing at it -->
+		{#if hand && arrow}
+			<g
 				data-marker="hand"
+				role="img"
+				aria-label={`Your hand${hand.name ? ` ${hand.name}` : ''}: ${pct(hand.equity)} equity, stronger than ${pct(hand.percentile)} of your range`}
 			>
 				<title
-					>Your hand: {pct(hand.equity)} equity, stronger than {pct(hand.percentile)} of your range</title
+					>Your hand{hand.name ? ` ${hand.name}` : ''}: {pct(hand.equity)} equity, stronger than {pct(
+						hand.percentile
+					)} of your range</title
 				>
-			</circle>
+				<path
+					d={arrow.d}
+					fill="none"
+					stroke="#f8fafc"
+					stroke-width="2.5"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				/>
+				<text
+					x={arrow.px}
+					y={arrow.labelY}
+					text-anchor={arrow.anchor}
+					font-size="11"
+					font-weight="700"
+					fill="#f8fafc">{hand.name ?? 'Your hand'}</text
+				>
+			</g>
 		{/if}
 
 		<!-- legend -->
@@ -161,15 +293,17 @@
 			/>
 			<text x={LEFT + 36} y={TOP + 34}>{theirLabel} · avg {pct(average(theirs))}</text>
 			{#if hand}
-				<circle
-					cx={LEFT + 20}
-					cy={TOP + 46}
-					r="4.5"
-					fill="#f8fafc"
-					stroke="#f59e0b"
+				<path
+					d={`M${LEFT + 20},${TOP + 53} L${LEFT + 20},${TOP + 41} M${LEFT + 16},${TOP + 45} L${LEFT + 20},${TOP + 41} L${LEFT + 24},${TOP + 45}`}
+					fill="none"
+					stroke="#f8fafc"
 					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
 				/>
-				<text x={LEFT + 36} y={TOP + 50}>Your hand · {pct(hand.equity)}</text>
+				<text x={LEFT + 36} y={TOP + 50}
+					>{hand.name ? `${hand.name} · ` : 'Your hand · '}{pct(hand.equity)}</text
+				>
 			{/if}
 		</g>
 	</svg>

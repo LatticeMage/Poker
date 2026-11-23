@@ -77,6 +77,16 @@ export interface SpotList {
 	vs_3bet: Record<string, string[]>;
 }
 
+/** A hand class on an equity curve. */
+export interface CurveHand {
+	hand: string;
+	equity: number;
+	/** Share of the range (0..1). */
+	weight: number;
+	/** 0 weakest .. 1 strongest. */
+	percentile: number;
+}
+
 /** Equity when neither player's cards are known: range against range. */
 export interface UnknownHands {
 	my_range_eq: number;
@@ -87,6 +97,9 @@ export interface UnknownHands {
 	/** Equity distribution: hands spread over the range, weakest to strongest; point i is at (i + 0.5) / n. */
 	my_curve: number[];
 	their_curve: number[];
+	/** Every hand class of each range, weakest first: its equity, share of the range and percentile. */
+	my_hands: CurveHand[];
+	their_hands: CurveHand[];
 	view: 'mine' | 'theirs';
 	/** Equity of each hand class of the viewed range against the other range. */
 	grid: Record<string, number>;

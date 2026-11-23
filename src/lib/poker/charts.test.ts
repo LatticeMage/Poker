@@ -116,6 +116,18 @@ describe('board equity', () => {
 		).toBeLessThan(0.04);
 		expect(u.my_curve[u.my_curve.length - 1]).toBeGreaterThan(0.9);
 		expect(u.my_curve[0]).toBeLessThan(0.25);
+		// One labelled point per hand class, weakest first, shares summing to the whole range.
+		for (const hands of [u.my_hands, u.their_hands]) {
+			expect(hands.length).toBeGreaterThan(10);
+			expect(hands.map((h) => h.equity)).toEqual(
+				[...hands.map((h) => h.equity)].sort((a, b) => a - b)
+			);
+			expect(hands.reduce((s, h) => s + h.weight, 0)).toBeCloseTo(1);
+			expect(hands.every((h) => h.percentile > 0 && h.percentile < 1 && h.hand.length >= 2)).toBe(
+				true
+			);
+		}
+		expect(u.my_hands.find((h) => h.hand === 'AA')?.equity).toBeCloseTo(u.grid.AA);
 
 		const set = boardEquity(query({ hole: 'AhAd' })).known!;
 		expect(set.hand).toBe('AA');

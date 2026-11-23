@@ -524,6 +524,48 @@ export function classEquities(
 	return out;
 }
 
+/** One hand class of a range on the equity chart. */
+export interface ClassPoint {
+	hand: string;
+	equity: number;
+	/** Share of the range's live combos this class makes up (the shares sum to 1). */
+	weight: number;
+	/** Where the class sits in the range: 0 weakest .. 1 strongest (the middle of its slice). */
+	percentile: number;
+}
+
+/** Every hand class of your range with its equity, weakest first, for labelling the curve. */
+export function classPoints(
+	board: readonly Card[],
+	mine: Weighted,
+	theirs: Weighted
+): ClassPoint[] | null {
+	const eqs = classEquities(board, mine, theirs);
+	if (!eqs) return null;
+	const rows = Object.entries(eqs)
+		.map(([hand, equity]) => {
+			const live = classCombos(hand).filter(
+				(c) => !board.includes(c[0]) && !board.includes(c[1])
+			).length;
+			return { hand, equity, mass: live * (mine[hand] ?? 0) };
+		})
+		.filter((r) => r.mass > 0)
+		.sort((a, b) => a.equity - b.equity || (a.hand < b.hand ? -1 : 1));
+	const total = rows.reduce((s, r) => s + r.mass, 0);
+	if (total <= 0) return null;
+	let below = 0;
+	return rows.map((r) => {
+		const point = {
+			hand: r.hand,
+			equity: r.equity,
+			weight: r.mass / total,
+			percentile: (below + r.mass / 2) / total
+		};
+		below += r.mass;
+		return point;
+	});
+}
+
 /**
  * Equity of hands spread evenly over your range against theirs, weakest first. Plotted against the
  * percentile of the range (0 = weakest, 1 = strongest) this is the usual equity distribution chart;

@@ -404,6 +404,8 @@ export function boardEquity(q: BoardQuery): BoardEquity {
 			their_combos: roundHalfEven(postflop.rangeCombos(theirs, board)),
 			my_curve: myCurve,
 			their_curve: theirCurve,
+			my_hands: postflop.classPoints(board, mine, theirs) ?? [],
+			their_hands: postflop.classPoints(board, theirs, mine) ?? [],
 			view: q.view,
 			grid
 		},

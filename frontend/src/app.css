@@ -1,0 +1,53 @@
+@import 'tailwindcss';
+
+:root {
+	--room: #0b1220;
+	--panel: #111a2e;
+	--panel-edge: #24304d;
+	--felt-hi: #15805f;
+	--felt-lo: #0a4a38;
+	--rail: #2b1d16;
+	--brass: #c9a35a;
+	--accent: #f5b942;
+	color-scheme: dark;
+}
+
+html,
+body {
+	height: 100%;
+}
+
+body {
+	margin: 0;
+	background:
+		radial-gradient(120% 80% at 50% 0%, #16223d 0%, var(--room) 60%) fixed,
+		var(--room);
+	color: #e6ebf5;
+	font-family:
+		ui-sans-serif,
+		system-ui,
+		-apple-system,
+		'Segoe UI',
+		Roboto,
+		'Noto Sans TC',
+		sans-serif;
+	-webkit-font-smoothing: antialiased;
+	overscroll-behavior: none;
+}
+
+button {
+	cursor: pointer;
+}
+
+button:disabled {
+	cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		transition-duration: 0.01ms !important;
+	}
+}

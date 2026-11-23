@@ -1,0 +1,535 @@
+<!--
+	Starting-hand charts. Three views:
+	  · Opening: pick a table size and a seat to see which hands to raise first in.
+	  · Facing a raise: what to do against an open, or against a 3-bet after you opened.
+	  · Short stack: heads-up push/fold for a stack of 2-20bb.
+	Click a hand to study it. `players` and `seatName` can be bound, so a page can steer the chart.
+-->
+
+<script lang="ts">
+	import { loadPushFold, loadRangeChart, loadSpot, loadSpotList } from '$lib/actions/ranges';
+	import { rangeStore, spotKey } from '$lib/stores/ranges.svelte';
+	import { settings } from '$lib/stores/settings.svelte';
+	import { TOTAL_COMBOS, handCombos, handTitle, percentiles } from '$lib/utils/hands';
+	import HandGrid from './HandGrid.svelte';
+
+	let {
+		players = $bindable(settings.players),
+		seatName = $bindable('')
+	}: { players?: number; seatName?: string } = $props();
+
+	let mode = $state<'open' | 'spot' | 'pushfold'>('open');
+	let picked = $state<string | null>(null);
+
+	// Opening view.
+	const chart = $derived(rangeStore.charts[players]);
+	// The chosen seat by name, kept when the table size changes if the seat still exists; the big
+	// blind never opens, so a missing or blind seat falls back to the first seat.
+	const seat = $derived.by(() => {
+		if (!chart) return null;
+		const open = chart.seats.filter((s) => s.source !== 'none');
+		return open.find((s) => s.name === seatName) ?? open[0];
+	});
+
+	// Facing-a-raise view. The chosen positions fall back to ones that exist for the spot.
+	let kind = $state<'vs_open' | 'vs_3bet'>('vs_open');
+	let heroPick = $state('BB');
+	let villainPick = $state('BTN');
+	const spotList = $derived(rangeStore.spotList);
+	const heroOptions = $derived(spotList ? Object.keys(spotList[kind]) : []);
+	const hero = $derived(heroOptions.includes(heroPick) ? heroPick : (heroOptions[0] ?? ''));
+	const villainOptions = $derived(spotList && hero ? (spotList[kind][hero] ?? []) : []);
+	const villain = $derived(
+		villainOptions.includes(villainPick) ? villainPick : (villainOptions[0] ?? '')
+	);
+	const spot = $derived(
+		hero && villain ? rangeStore.spots[spotKey(kind, hero, villain)] : undefined
+	);
+	/** Per hand: [raise for value, raise as a bluff, call] shares. */
+	const mix = $derived.by(() => {
+		if (!spot) return undefined;
+		const out: Record<string, [number, number, number]> = {};
+		for (const hand of new Set([
+			...Object.keys(spot.call),
+			...Object.keys(spot.bluff),
+			...Object.keys(spot.value)
+		])) {
+			out[hand] = [spot.value[hand] ?? 0, spot.bluff[hand] ?? 0, spot.call[hand] ?? 0];
+		}
+		return out;
+	});
+
+	// Short-stack view.
+	let stack = $state(10);
+	let side = $state<'push' | 'call'>('push');
+	const pushFold = $derived(rangeStore.pushFold[stack]);
+
+	// Strength data comes with any opening chart (it does not depend on the table size).
+	const base = $derived(mode === 'open' ? chart : rangeStore.charts[2]);
+	const percentile = $derived(base ? percentiles(base.order) : {});
+
+	const shown = $derived(
+		new Set(
+			mode === 'open'
+				? (seat?.hands ?? [])
+				: mode === 'pushfold'
+					? side === 'push'
+						? (pushFold?.push ?? [])
+						: (pushFold?.call ?? [])
+					: []
+		)
+	);
+	const verb = $derived(mode === 'open' ? 'raise' : side === 'push' ? 'shove' : 'call');
+
+	$effect(() => {
+		if (mode === 'open') {
+			void loadRangeChart(players);
+			return;
+		}
+		void loadRangeChart(2);
+		if (mode === 'pushfold') {
+			void loadPushFold(stack);
+		} else {
+			void loadSpotList();
+			if (hero && villain) void loadSpot(kind, hero, villain);
+		}
+	});
+
+	const sourceText = $derived(
+		!seat
+			? ''
+			: seat.source === 'table'
+				? `Chart: ${seat.label}`
+				: seat.source === 'computed'
+					? `Computed: ${seat.label}`
+					: seat.label
+	);
+
+	// Where the picked hand opens at this table size.
+	const raisesFrom = $derived(
+		picked && chart
+			? chart.seats.filter((s) => s.source !== 'none' && s.hands.includes(picked!))
+			: []
+	);
+	const foldsFrom = $derived(
+		picked && chart
+			? chart.seats.filter((s) => s.source !== 'none' && !s.hands.includes(picked!))
+			: []
+	);
+
+	const pct = (n: number) => `${Math.round(n * 100)}%`;
+	/** The picked hand's mix in the facing-a-raise view, as readable parts. */
+	const pickedMix = $derived.by(() => {
+		if (!picked || !spot) return [];
+		const value = spot.value[picked] ?? 0;
+		const bluff = spot.bluff[picked] ?? 0;
+		const call = spot.call[picked] ?? 0;
+		const fold = Math.max(0, 1 - value - bluff - call);
+		return [
+			{ label: spot.labels.value, share: value, color: '#d97706' },
+			{ label: spot.labels.bluff, share: bluff, color: '#f43f5e' },
+			{ label: spot.labels.call, share: call, color: '#0284c7' },
+			{ label: 'Fold', share: fold, color: '#475569' }
+		].filter((part) => part.share > 0.004);
+	});
+	const spotCombos = $derived(spot ? spot.combos.call + spot.combos.bluff + spot.combos.value : 0);
+</script>
+
+<div class="flex flex-col gap-3">
+	<div class="flex flex-wrap gap-1" role="tablist" aria-label="Chart type">
+		<button
+			class="seat-tab"
+			class:selected={mode === 'open'}
+			role="tab"
+			aria-selected={mode === 'open'}
+			onclick={() => (mode = 'open')}
+		>
+			Opening ranges
+		</button>
+		<button
+			class="seat-tab"
+			class:selected={mode === 'spot'}
+			role="tab"
+			aria-selected={mode === 'spot'}
+			onclick={() => (mode = 'spot')}
+		>
+			Facing a raise
+		</button>
+		<button
+			class="seat-tab"
+			class:selected={mode === 'pushfold'}
+			role="tab"
+			aria-selected={mode === 'pushfold'}
+			onclick={() => (mode = 'pushfold')}
+		>
+			Short stack (heads-up)
+		</button>
+	</div>
+
+	{#if mode === 'open'}
+		<label class="flex items-center gap-3 text-sm font-semibold">
+			Players
+			<input
+				class="min-w-0 flex-1 accent-amber-500"
+				type="range"
+				min="2"
+				max="9"
+				step="1"
+				bind:value={players}
+				aria-label="Players at the table"
+			/>
+			<span class="w-4 text-right tabular-nums">{players}</span>
+		</label>
+
+		{#if chart}
+			<div class="flex flex-wrap gap-1" role="tablist" aria-label="Seat">
+				{#each chart.seats as s (s.name)}
+					<button
+						class="seat-tab seat"
+						class:selected={seat === s}
+						role="tab"
+						aria-label={s.name}
+						aria-selected={seat === s}
+						disabled={s.source === 'none'}
+						onclick={() => (seatName = s.name)}
+					>
+						<span>{s.name}</span>
+						{#if s.source !== 'none'}<span class="pct">{s.pct}%</span>{/if}
+					</button>
+				{/each}
+			</div>
+
+			{#if seat}
+				<HandGrid
+					hands={shown}
+					{verb}
+					label={`${seat.name} opening range`}
+					selected={picked}
+					onpick={(hand) => (picked = hand)}
+				/>
+
+				<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
+					<span>
+						<span class="font-bold tabular-nums">{seat.pct}%</span> of hands ·
+						{seat.behind}
+						{seat.behind === 1 ? 'player' : 'players'} behind
+					</span>
+					<span class="text-xs text-slate-400">
+						{#if seat.url}
+							<a class="text-amber-400 underline" href={seat.url} target="_blank" rel="noreferrer">
+								{sourceText}
+							</a>
+						{:else}
+							{sourceText}
+						{/if}
+					</span>
+				</div>
+				{#if seat.source === 'computed' || seat.source === 'fallback'}
+					<p class="rounded-md bg-slate-800 px-2 py-1 text-xs text-slate-300">
+						{seat.source === 'computed'
+							? 'No published chart for this seat: the hands are the strongest ones by the strength order built from the other charts.'
+							: 'No source found for this spot, so this is a stand-in. Real heads-up opening ranges are wider.'}
+					</p>
+				{/if}
+			{/if}
+		{:else if rangeStore.error}
+			<p class="text-sm text-rose-300">{rangeStore.error}</p>
+		{:else}
+			<p class="text-sm text-slate-400">Loading…</p>
+		{/if}
+	{:else if mode === 'spot'}
+		<div class="flex gap-1" role="tablist" aria-label="Spot">
+			<button
+				class="seat-tab"
+				class:selected={kind === 'vs_open'}
+				role="tab"
+				aria-selected={kind === 'vs_open'}
+				onclick={() => (kind = 'vs_open')}
+			>
+				Facing an open
+			</button>
+			<button
+				class="seat-tab"
+				class:selected={kind === 'vs_3bet'}
+				role="tab"
+				aria-selected={kind === 'vs_3bet'}
+				onclick={() => (kind = 'vs_3bet')}
+			>
+				Opened, facing a 3-bet
+			</button>
+		</div>
+
+		{#if spotList}
+			<div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+				<div class="flex items-center gap-1" role="tablist" aria-label="You are">
+					<span class="text-xs font-semibold text-slate-400"
+						>{kind === 'vs_open' ? 'You' : 'You opened from'}</span
+					>
+					{#each heroOptions as option (option)}
+						<button
+							class="seat-tab"
+							class:selected={hero === option}
+							role="tab"
+							aria-selected={hero === option}
+							onclick={() => (heroPick = option)}
+						>
+							{option}
+						</button>
+					{/each}
+				</div>
+				<div
+					class="flex items-center gap-1"
+					role="tablist"
+					aria-label={kind === 'vs_open' ? 'Opener' : '3-bettor'}
+				>
+					<span class="text-xs font-semibold text-slate-400">
+						{kind === 'vs_open' ? 'vs open from' : 'vs 3-bet from'}
+					</span>
+					{#each villainOptions as option (option)}
+						<button
+							class="seat-tab"
+							class:selected={villain === option}
+							role="tab"
+							aria-selected={villain === option}
+							onclick={() => (villainPick = option)}
+						>
+							{option}
+						</button>
+					{/each}
+				</div>
+			</div>
+		{/if}
+
+		{#if spot && mix}
+			<HandGrid
+				hands={shown}
+				verb="raise"
+				label={`${spot.hero} ${spot.kind === 'vs_open' ? 'facing an open from' : 'facing a 3-bet from'} ${spot.villain}`}
+				{mix}
+				selected={picked}
+				onpick={(hand) => (picked = hand)}
+			/>
+			<ul class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-300" aria-label="Legend">
+				<li class="flex items-center gap-1">
+					<span class="swatch" style:background="#d97706"></span>{spot.labels.value}
+				</li>
+				<li class="flex items-center gap-1">
+					<span class="swatch" style:background="#f43f5e"></span>{spot.labels.bluff}
+				</li>
+				<li class="flex items-center gap-1">
+					<span class="swatch" style:background="#0284c7"></span>{spot.labels.call}
+				</li>
+				<li class="flex items-center gap-1">
+					<span class="swatch" style:background="#1e293b"></span>Fold
+				</li>
+			</ul>
+			<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
+				<span class="tabular-nums">
+					<span class="font-bold">{spot.combos.call}</span> combos call ·
+					<span class="font-bold">{spot.combos.bluff + spot.combos.value}</span> raise
+					<span class="text-slate-400">
+						({((100 * spotCombos) / TOTAL_COMBOS).toFixed(1)}% of hands continue)
+					</span>
+				</span>
+				<span class="text-xs text-slate-400">
+					<a class="text-amber-400 underline" href={spot.url} target="_blank" rel="noreferrer">
+						Chart: PokerStrategy 6-max, {spot.hero}
+					</a>
+				</span>
+			</div>
+			<p class="text-xs text-slate-500">
+				{spot.note} Some hands are split: for example AA calls with one combo and raises with the other
+				five, so mixing the two is part of the strategy.
+			</p>
+		{:else if rangeStore.error}
+			<p class="text-sm text-rose-300">{rangeStore.error}</p>
+		{:else}
+			<p class="text-sm text-slate-400">Loading…</p>
+		{/if}
+	{:else}
+		<label class="flex items-center gap-3 text-sm font-semibold">
+			Stack
+			<input
+				class="min-w-0 flex-1 accent-amber-500"
+				type="range"
+				min="2"
+				max="20"
+				step="1"
+				bind:value={stack}
+				aria-label="Effective stack in big blinds"
+			/>
+			<span class="w-12 text-right tabular-nums">{stack}bb</span>
+		</label>
+
+		<div class="flex gap-1" role="tablist" aria-label="Who acts">
+			<button
+				class="seat-tab"
+				class:selected={side === 'push'}
+				role="tab"
+				aria-selected={side === 'push'}
+				onclick={() => (side = 'push')}
+			>
+				SB shoves
+			</button>
+			<button
+				class="seat-tab"
+				class:selected={side === 'call'}
+				role="tab"
+				aria-selected={side === 'call'}
+				onclick={() => (side = 'call')}
+			>
+				BB calls
+			</button>
+		</div>
+
+		{#if pushFold}
+			<HandGrid
+				hands={shown}
+				{verb}
+				label={side === 'push' ? 'Small blind shoving range' : 'Big blind calling range'}
+				selected={picked}
+				onpick={(hand) => (picked = hand)}
+			/>
+			<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
+				<span>
+					<span class="font-bold tabular-nums">
+						{side === 'push' ? pushFold.push_pct : pushFold.call_pct}%
+					</span>
+					of hands
+				</span>
+				<span class="text-xs text-slate-400">
+					Computed · off by ≤ {pushFold.exploitability_bb.toFixed(3)} bb per hand
+				</span>
+			</div>
+			<p class="rounded-md bg-slate-800 px-2 py-1 text-xs text-slate-300">{pushFold.note}</p>
+		{:else if rangeStore.error}
+			<p class="text-sm text-rose-300">{rangeStore.error}</p>
+		{:else}
+			<p class="text-sm text-slate-400">Loading…</p>
+		{/if}
+	{/if}
+
+	<!-- The hand being studied -->
+	<section
+		class="rounded-lg border border-slate-700 bg-slate-900/60 p-3 text-sm"
+		aria-live="polite"
+	>
+		{#if picked}
+			<div class="flex flex-wrap items-baseline gap-x-2">
+				<h3 class="text-base font-bold">{handTitle(picked)}</h3>
+				<span class="text-slate-400">{picked} · {handCombos(picked)} combos</span>
+			</div>
+			{#if percentile[picked] !== undefined}
+				<p class="mt-1 text-slate-300">
+					Top <span class="font-semibold tabular-nums">{percentile[picked].toFixed(1)}%</span> of
+					starting hands{#if base?.equity_vs_random[picked]}, wins
+						<span class="font-semibold tabular-nums">
+							{(base.equity_vs_random[picked] * 100).toFixed(1)}%
+						</span>
+						against one random hand{/if}.
+				</p>
+			{/if}
+			{#if mode === 'open' && seat}
+				<p class="mt-1">
+					From <span class="font-semibold">{seat.name}</span>:
+					<span class={shown.has(picked) ? 'font-bold text-amber-400' : 'font-bold text-slate-400'}>
+						{shown.has(picked) ? 'raise' : 'fold'}
+					</span>
+				</p>
+				{#if raisesFrom.length > 0}
+					<p class="mt-1 text-xs text-slate-400">
+						Opens from {raisesFrom.map((s) => s.name).join(', ')}{foldsFrom.length > 0
+							? `; folds from ${foldsFrom.map((s) => s.name).join(', ')}`
+							: ''} at {players} players.
+					</p>
+				{:else}
+					<p class="mt-1 text-xs text-slate-400">Never opened first-in at {players} players.</p>
+				{/if}
+			{:else if mode === 'spot' && spot}
+				<p class="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+					<span class="text-slate-400">
+						{spot.hero}
+						{spot.kind === 'vs_open' ? 'vs open from' : 'vs 3-bet from'}
+						{spot.villain}:
+					</span>
+					{#each pickedMix as part (part.label)}
+						<span class="flex items-center gap-1">
+							<span class="swatch" style:background={part.color}></span>
+							<span class="font-bold tabular-nums">{pct(part.share)}</span>
+							{part.label}
+						</span>
+					{/each}
+				</p>
+			{:else if mode === 'pushfold' && pushFold}
+				<p class="mt-1">
+					At {stack}bb: small blind
+					<span class="font-bold">{pushFold.push.includes(picked) ? 'shoves' : 'folds'}</span>, big
+					blind
+					<span class="font-bold">{pushFold.call.includes(picked) ? 'calls' : 'folds'}</span>
+					a shove.
+				</p>
+			{/if}
+		{:else}
+			<p class="text-slate-400">Click a hand to see how strong it is and what to do with it.</p>
+		{/if}
+	</section>
+
+	{#if mode === 'open'}
+		<p class="text-xs text-slate-500">
+			Raise-first-in, about {chart?.stack_bb ?? 100}bb deep, {chart?.open_size_bb ?? 2.5}x open.
+			Amber = raise, grey = fold. Robots at this table follow these charts.
+		</p>
+	{:else if mode === 'pushfold'}
+		<p class="text-xs text-slate-500">
+			Heads-up, chips only (no tournament pressure): the small blind shoves or folds, the big blind
+			calls or folds. Robots use these when heads-up with 10bb or less.
+		</p>
+	{/if}
+</div>
+
+<style>
+	.seat-tab {
+		border: 1px solid #334155;
+		border-radius: 0.4rem;
+		background: #1e293b;
+		padding: 0.2rem 0.55rem;
+		font-size: 0.78rem;
+		font-weight: 700;
+		color: #cbd5e1;
+	}
+
+	.seat-tab.seat {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		line-height: 1.15;
+	}
+
+	.pct {
+		font-size: 0.62rem;
+		font-weight: 600;
+		color: #94a3b8;
+	}
+
+	.seat-tab.selected {
+		border-color: var(--accent);
+		background: #78350f;
+		color: #fff7e6;
+	}
+
+	.seat-tab.selected .pct {
+		color: #fcd9a0;
+	}
+
+	.seat-tab:disabled {
+		opacity: 0.35;
+	}
+
+	.swatch {
+		display: inline-block;
+		width: 0.7rem;
+		height: 0.7rem;
+		border: 1px solid rgb(255 255 255 / 0.25);
+		border-radius: 0.15rem;
+	}
+</style>

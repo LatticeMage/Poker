@@ -79,6 +79,15 @@
 					: []
 		)
 	);
+	// Per hand: how often it opens / shoves / calls (the rest folds), drawn as a partly filled cell.
+	const openMix = $derived.by(() => {
+		const freq =
+			mode === 'open' ? seat?.mix : side === 'push' ? pushFold?.push_mix : pushFold?.call_mix;
+		if (!freq) return undefined;
+		return Object.fromEntries(
+			Object.entries(freq).map(([hand, f]) => [hand, [f, 0, 0] as [number, number, number]])
+		);
+	});
 	const verb = $derived(mode === 'open' ? 'raise' : side === 'push' ? 'shove' : 'call');
 
 	$effect(() => {
@@ -203,6 +212,7 @@
 				<HandGrid
 					hands={shown}
 					{verb}
+					mix={openMix}
 					label={`${seat.name} opening range`}
 					selected={picked}
 					onpick={(hand) => (picked = hand)}
@@ -386,6 +396,7 @@
 			<HandGrid
 				hands={shown}
 				{verb}
+				mix={openMix}
 				label={side === 'push' ? 'Small blind shoving range' : 'Big blind calling range'}
 				selected={picked}
 				onpick={(hand) => (picked = hand)}

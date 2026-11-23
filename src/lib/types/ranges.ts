@@ -14,6 +14,8 @@ export interface SeatRange {
 	url: string;
 	/** Hand classes such as "AKs", "T9o", "77", strongest first. */
 	hands: string[];
+	/** Share of each hand's combos that open (0-1); hands near the edge of the range are mixed. */
+	mix: Record<string, number>;
 }
 
 export interface RangeChart {
@@ -34,6 +36,10 @@ export interface PushFoldChart {
 	push: string[];
 	/** Hands the big blind calls a shove with, strongest first. */
 	call: string[];
+	/** Share of each hand's combos that shove (0-1), from the solver's mixed strategy. */
+	push_mix: Record<string, number>;
+	/** Share of each hand's combos that call (0-1). */
+	call_mix: Record<string, number>;
 	push_pct: number;
 	call_pct: number;
 	/** What a best response still gains per hand, in big blinds. */

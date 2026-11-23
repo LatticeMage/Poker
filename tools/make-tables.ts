@@ -74,6 +74,9 @@ function conflictFreeWeights(): Float64Array[] {
 }
 
 interface Solution {
+	/** Averaged fictitious-play frequencies: the mixed strategy before thresholding. */
+	pushMix: Float64Array;
+	callMix: Float64Array;
 	push: Float64Array;
 	call: Float64Array;
 	exploitability: number;
@@ -144,7 +147,7 @@ function solve(equity: Float64Array[], w: Float64Array[], stack: number): Soluti
 		sbTotal(Float64Array.from(bestSb(callPure)), callPure) - sbTotal(pushPure, callPure);
 	const gapBb =
 		bbTotal(Float64Array.from(bestBb(pushPure)), pushPure) - bbTotal(callPure, pushPure);
-	return { push: pushPure, call: callPure, exploitability: gapSb + gapBb };
+	return { pushMix: push, callMix: call, push: pushPure, call: callPure, exploitability: gapSb + gapBb };
 }
 
 const started = Date.now();
@@ -186,6 +189,11 @@ const pct = (flags: Float64Array) => {
 	return Math.round(((100 * hit) / all) * 10) / 10;
 };
 const pushFold: Record<string, unknown> = {};
+const mixes: Record<string, unknown> = {};
+const freqs = (f: Float64Array) =>
+	Object.fromEntries(
+		ALL_HANDS.flatMap((name, i) => (f[i] >= 0.02 ? [[name, Math.round(Math.min(1, f[i]) * 100) / 100]] : []))
+	);
 for (const stack of STACKS) {
 	const s = solve(equity, w, stack);
 	const row = {
@@ -196,6 +204,7 @@ for (const stack of STACKS) {
 		exploitability_bb: Math.round(s.exploitability * 10000) / 10000
 	};
 	pushFold[String(stack)] = row;
+	mixes[String(stack)] = { push: freqs(s.pushMix), call: freqs(s.callMix) };
 	console.log(
 		`  ${String(stack).padStart(2)}bb  push ${row.push_pct}%  call ${row.call_pct}%  exploitability ${row.exploitability_bb}`
 	);
@@ -203,6 +212,6 @@ for (const stack of STACKS) {
 
 writeFileSync(
 	out,
-	JSON.stringify({ samples_per_matchup: samples, equity_vs_random: vsRandom, pushfold: pushFold })
+	JSON.stringify({ samples_per_matchup: samples, equity_vs_random: vsRandom, pushfold: pushFold, mix: mixes })
 );
 console.log(`wrote ${out} in ${Math.round((Date.now() - started) / 1000)}s`);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { BoardQuery } from '$lib/types/ranges';
 import { ChartError, boardEquity, pushFoldChart, rangeChart, spotChart, spotList } from './charts';
 import { parseCompact } from './cards';
+import { combos } from './ranges';
 
 const base: BoardQuery = {
 	pot: 'srp',
@@ -44,6 +45,22 @@ describe('range charts', () => {
 		expect(six.BTN.hands).not.toContain('72o');
 		expect(() => rangeChart(1)).toThrow(ChartError);
 		expect(() => rangeChart(10)).toThrow(ChartError);
+	});
+
+	it('mixes the edge of an opening range and keeps its total share', () => {
+		for (const seat of rangeChart(6).seats.filter((x) => x.source !== 'none')) {
+			const freqs = Object.values(seat.mix);
+			expect(
+				freqs.some((f) => f > 0 && f < 1),
+				seat.name
+			).toBe(true);
+			expect(seat.hands.every((h) => seat.mix[h] > 0)).toBe(true);
+			const share = Object.entries(seat.mix).reduce((n, [h, f]) => n + f * combos(h), 0) / 13.26;
+			expect(Math.abs(share - seat.pct)).toBeLessThan(0.6);
+		}
+		const solved = pushFoldChart(10);
+		expect(Object.values(solved.push_mix).some((f) => f > 0 && f < 1)).toBe(true);
+		expect(solved.push_mix.AA).toBe(1);
 	});
 
 	it('answers the push/fold chart', () => {

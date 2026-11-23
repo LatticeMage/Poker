@@ -96,7 +96,9 @@
 						class="deck-card"
 						class:red={isRed(card)}
 						class:taken={mine.has(card)}
+						class:gone={blocked.has(card) || (mine.has(card) && cards[cursor] !== card)}
 						disabled={blocked.has(card) || (mine.has(card) && cards[cursor] !== card)}
+						tabindex={blocked.has(card) || (mine.has(card) && cards[cursor] !== card) ? -1 : 0}
 						aria-label={cardName(card)}
 						onclick={() => put(card)}
 					>
@@ -165,8 +167,8 @@
 		outline: 2px solid #38bdf8;
 	}
 
-	.deck-card:disabled:not(.taken) {
-		background: #334155;
-		color: #64748b;
+	/* A card that cannot be picked is removed, but its place stays so the ranks keep their columns. */
+	.deck-card.gone {
+		visibility: hidden;
 	}
 </style>

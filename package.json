@@ -15,7 +15,8 @@
 		"lint:check": "npm run check && prettier --check . && npx eslint . --ext .svelte,.svelte.ts,.svelte.js",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"tables": "vite-node tools/make-tables.ts"
+		"tables": "vite-node tools/make-tables.ts",
+		"solve": "vite-node tools/solve-preflop.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^1.4.0",

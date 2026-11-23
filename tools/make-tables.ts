@@ -147,7 +147,13 @@ function solve(equity: Float64Array[], w: Float64Array[], stack: number): Soluti
 		sbTotal(Float64Array.from(bestSb(callPure)), callPure) - sbTotal(pushPure, callPure);
 	const gapBb =
 		bbTotal(Float64Array.from(bestBb(pushPure)), pushPure) - bbTotal(callPure, pushPure);
-	return { pushMix: push, callMix: call, push: pushPure, call: callPure, exploitability: gapSb + gapBb };
+	return {
+		pushMix: push,
+		callMix: call,
+		push: pushPure,
+		call: callPure,
+		exploitability: gapSb + gapBb
+	};
 }
 
 const started = Date.now();
@@ -192,7 +198,9 @@ const pushFold: Record<string, unknown> = {};
 const mixes: Record<string, unknown> = {};
 const freqs = (f: Float64Array) =>
 	Object.fromEntries(
-		ALL_HANDS.flatMap((name, i) => (f[i] >= 0.02 ? [[name, Math.round(Math.min(1, f[i]) * 100) / 100]] : []))
+		ALL_HANDS.flatMap((name, i) =>
+			f[i] >= 0.02 ? [[name, Math.round(Math.min(1, f[i]) * 100) / 100]] : []
+		)
 	);
 for (const stack of STACKS) {
 	const s = solve(equity, w, stack);
@@ -212,6 +220,11 @@ for (const stack of STACKS) {
 
 writeFileSync(
 	out,
-	JSON.stringify({ samples_per_matchup: samples, equity_vs_random: vsRandom, pushfold: pushFold, mix: mixes })
+	JSON.stringify({
+		samples_per_matchup: samples,
+		equity_vs_random: vsRandom,
+		pushfold: pushFold,
+		mix: mixes
+	})
 );
 console.log(`wrote ${out} in ${Math.round((Date.now() - started) / 1000)}s`);

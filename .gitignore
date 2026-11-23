@@ -28,3 +28,4 @@ vite.config.ts.timestamp-*
 # third-party reference bundles studied for this project
 application-*.js
 application-*.css
+tools/.cache

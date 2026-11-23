@@ -7,7 +7,13 @@
 -->
 
 <script lang="ts">
-	import { loadPushFold, loadRangeChart, loadSpot, loadSpotList } from '$lib/actions/ranges';
+	import {
+		loadHeadsUp,
+		loadPushFold,
+		loadRangeChart,
+		loadSpot,
+		loadSpotList
+	} from '$lib/actions/ranges';
 	import { rangeStore, spotKey } from '$lib/stores/ranges.svelte';
 	import { settings } from '$lib/stores/settings.svelte';
 	import { handCombos, handTitle, percentiles, positionClass } from '$lib/utils/hands';
@@ -18,7 +24,7 @@
 		seatName = $bindable('')
 	}: { players?: number; seatName?: string } = $props();
 
-	let mode = $state<'open' | 'pushfold'>('open');
+	let mode = $state<'open' | 'headsup' | 'pushfold'>('open');
 	let picked = $state<string | null>(null);
 
 	// Opening view.
@@ -73,6 +79,51 @@
 		return out;
 	});
 
+	// Solved heads-up view: the small blind and big blind at 10 / 20 / 40 / 80bb.
+	let duelStack = $state(20);
+	let duelPlayer = $state<'SB' | 'BB'>('SB');
+	let duelNode = $state('root');
+	const duel = $derived(rangeStore.headsUp[duelStack]);
+	const duelNodes = $derived(
+		duel
+			? Object.entries(duel.nodes)
+					.filter(([, n]) => n.player === duelPlayer)
+					.sort(
+						(a, b) => a[0].split('/').length - b[0].split('/').length || b[1].reach - a[1].reach
+					)
+			: []
+	);
+	const duelCurrent = $derived(duelNodes.find(([id]) => id === duelNode) ?? duelNodes[0]);
+	const duelLabel = (id: string) => {
+		if (id === 'root') return 'First in';
+		const parts = id.split('/');
+		const last = parts[parts.length - 1];
+		const what = last === 'allin' ? 'all-in' : last;
+		if (parts[0] === 'limp') return parts.length === 1 ? 'vs limp' : `limp, then ${what}`;
+		return parts.length === 2
+			? last === 'allin'
+				? 'vs all-in'
+				: `vs open ${what}`
+			: `facing ${what}`;
+	};
+	/** Per hand: [raise, all-in, call/limp/check] shares; the rest folds. */
+	const duelMix = $derived.by(() => {
+		const node = duelCurrent?.[1];
+		if (!node) return undefined;
+		const out: Record<string, [number, number, number]> = {};
+		for (const [hand, shares] of Object.entries(node.freq)) {
+			const row: [number, number, number] = [0, 0, 0];
+			node.actions.forEach((action, i) => {
+				if (action === 'fold') return;
+				if (action === 'allin') row[1] += shares[i];
+				else if (action.startsWith('raise')) row[0] += shares[i];
+				else row[2] += shares[i];
+			});
+			out[hand] = row;
+		}
+		return out;
+	});
+
 	// Short-stack view.
 	let stack = $state(10);
 	let side = $state<'push' | 'call'>('push');
@@ -112,7 +163,9 @@
 			return;
 		}
 		void loadRangeChart(2);
-		if (mode === 'pushfold') {
+		if (mode === 'headsup') {
+			void loadHeadsUp(duelStack);
+		} else if (mode === 'pushfold') {
 			void loadPushFold(stack);
 		}
 	});
@@ -166,6 +219,15 @@
 			onclick={() => (mode = 'open')}
 		>
 			Preflop
+		</button>
+		<button
+			class="seat-tab"
+			class:selected={mode === 'headsup'}
+			role="tab"
+			aria-selected={mode === 'headsup'}
+			onclick={() => (mode = 'headsup')}
+		>
+			Heads-up solved
 		</button>
 		<button
 			class="seat-tab"
@@ -301,6 +363,91 @@
 					{/if}
 				{/if}
 			{/if}
+		{:else if rangeStore.error}
+			<p class="text-sm text-rose-300">{rangeStore.error}</p>
+		{:else}
+			<p class="text-sm text-slate-400">Loading…</p>
+		{/if}
+	{:else if mode === 'headsup'}
+		<div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+			<div class="flex items-center gap-1" role="tablist" aria-label="Stack depth">
+				<span class="text-xs font-semibold text-slate-400">Stack</span>
+				{#each [10, 20, 40, 80] as depth (depth)}
+					<button
+						class="seat-tab"
+						class:selected={duelStack === depth}
+						role="tab"
+						aria-selected={duelStack === depth}
+						onclick={() => ((duelStack = depth), (duelNode = 'root'))}
+					>
+						{depth}bb
+					</button>
+				{/each}
+			</div>
+			<div class="flex items-center gap-1" role="tablist" aria-label="Seat">
+				{#each ['SB', 'BB'] as who (who)}
+					<button
+						class="seat-tab"
+						class:selected={duelPlayer === who}
+						role="tab"
+						aria-selected={duelPlayer === who}
+						onclick={() => (
+							(duelPlayer = who as 'SB' | 'BB'), (duelNode = who === 'SB' ? 'root' : 'open/2.5')
+						)}
+					>
+						{who}
+					</button>
+				{/each}
+			</div>
+		</div>
+
+		{#if duel && duelCurrent && duelMix}
+			<div class="flex flex-wrap items-center gap-1" role="tablist" aria-label="Situation">
+				{#each duelNodes as [id, node] (id)}
+					<button
+						class="seat-tab"
+						class:selected={duelCurrent[0] === id}
+						role="tab"
+						aria-selected={duelCurrent[0] === id}
+						title={`${(node.reach * 100).toFixed(1)}% of hands get here`}
+						onclick={() => (duelNode = id)}
+					>
+						{duelLabel(id)}
+					</button>
+				{/each}
+			</div>
+			<HandGrid
+				hands={new Set()}
+				verb="act"
+				mix={duelMix}
+				label={`${duelPlayer} ${duelLabel(duelCurrent[0])} at ${duelStack}bb`}
+				selected={picked}
+				onpick={(hand) => (picked = hand)}
+			/>
+			<ul class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-300" aria-label="Legend">
+				<li class="flex items-center gap-1">
+					<span class="swatch" style:background="#d97706"></span>Raise
+				</li>
+				<li class="flex items-center gap-1">
+					<span class="swatch" style:background="#f43f5e"></span>All-in
+				</li>
+				<li class="flex items-center gap-1">
+					<span class="swatch" style:background="#0284c7"></span>Call / limp / check
+				</li>
+				<li class="flex items-center gap-1">
+					<span class="swatch" style:background="#1e293b"></span>Fold
+				</li>
+			</ul>
+			<p class="text-xs text-slate-400">
+				Actions here: {duelCurrent[1].actions.join(', ')}. About
+				<span class="font-semibold tabular-nums">{(duelCurrent[1].reach * 100).toFixed(0)}%</span> of
+				hands reach this decision.
+			</p>
+			<p class="rounded-md bg-slate-800 px-2 py-1 text-xs text-slate-300">
+				Approximate solve: preflop only, CFR+ on hand-class equities with a position-based
+				realisation of equity after the flop (the small blind is in position). Not a full postflop
+				solve. Exploitability of this model: {duel.exploitability_bb.toFixed(3)} bb.
+			</p>
 		{:else if rangeStore.error}
 			<p class="text-sm text-rose-300">{rangeStore.error}</p>
 		{:else}

@@ -3,6 +3,7 @@
 
 import type {
 	BoardEquity,
+	HeadsUpChart,
 	PushFoldChart,
 	RangeChart,
 	SpotChart,
@@ -12,6 +13,7 @@ import type {
 class RangeStore {
 	charts = $state.raw<Record<number, RangeChart>>({});
 	pushFold = $state.raw<Record<number, PushFoldChart>>({});
+	headsUp = $state.raw<Record<number, HeadsUpChart>>({});
 	/** Keyed `${kind}:${hero}:${villain}`. */
 	spots = $state.raw<Record<string, SpotChart>>({});
 	spotList = $state.raw<SpotList | null>(null);

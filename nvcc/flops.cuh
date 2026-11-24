@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -217,6 +218,20 @@ static inline std::string flop_name(const Flop& f) {
 	return out;
 }
 
+// The smallest rank distance between two of the three cards, the ace also counted low (J-T-2: 1; K-7-2: 5).
+static inline int flop_min_gap_ace_low(const Flop& f) {
+	int r[3] = {f.cards[0] >> 2, f.cards[1] >> 2, f.cards[2] >> 2};
+	int best = 99;
+	for (int i = 0; i < 3; i++)
+		for (int j = i + 1; j < 3; j++) {
+			int g = std::abs(r[i] - r[j]);
+			if (r[i] == 12) g = std::min(g, std::abs(-1 - r[j]));
+			if (r[j] == 12) g = std::min(g, std::abs(r[i] + 1));
+			best = std::min(best, g);
+		}
+	return best;
+}
+
 // Number of broadway cards (T J Q K A) on the flop.
 static inline int flop_broadway(const Flop& f) {
 	int n = 0;
@@ -238,28 +253,83 @@ static inline int flop_span_ace_low(const Flop& f) {
 }
 
 // -- wetness: a RESULT, not a category ------------------------------------------------------------------------------
-// How many draws a board offers. Points from the flush side (rainbow 0, two-tone 1, monotone 2) and from the straight
-// side, measured on the DISTINCT ranks of the board with the ace both high and low (span <= 2: 2 points; 3-4: 1; else 0).
-// A paired board has only two distinct ranks, so its straight side is the span of those two (98x9 is tight), and a
-// paired board with a flush draw and a straight draw is wet. Trips are medium (2) by definition. 0 = 乾, 1 = 偏乾, 2 = 中,
-// 3 = 濕, 4 = 很濕.
-static inline int flop_wetness(const Flop& f) {
-	int r[3] = {f.cards[0] >> 2, f.cards[1] >> 2, f.cards[2] >> 2};
-	std::sort(r, r + 3);
-	std::vector<int> d;
-	for (int i = 0; i < 3; i++)
-		if (d.empty() || d.back() != r[i]) d.push_back(r[i]);
-	int span = d.back() - d.front();
-	if (d.back() == 12) {  // the ace also plays low
-		std::vector<int> l;
-		for (int x : d) l.push_back(x == 12 ? -1 : x);
-		span = std::min(span, *std::max_element(l.begin(), l.end()) - *std::min_element(l.begin(), l.end()));
+// Wet = different hole cards easily make different TYPES of hand on this flop (a made flush or straight, a flush draw, an
+// open-ended or a gutshot straight draw, ...); dry = different hole cards can hardly make any new type (no flush, no
+// straight, no draws). It is counted, not guessed: every one of the 1,176 two-card hands from the other 49 cards is
+// classified on the flop; the wetness is the share of hands that land in a drawing or made-straight/flush type, and the
+// number of different such types that occur says how varied it is.
+//   types: FLUSH (5 of a suit), STRAIGHT (five ranks in a row, ace high or low), FD (four of a suit, at least one in hand),
+//          OESD (open-ended straight draw: two different cards complete a straight), GUT (one rank completes it),
+//          BDFD (exactly three of a suit with a card of it in hand: a backdoor flush draw; reported in the counts only, it is not
+//          one of the types and not in the share)
+enum FlopType { T_FLUSH = 1, T_STRAIGHT = 2, T_FD = 4, T_OESD = 8, T_GUT = 16, T_BDFD = 32 };
+
+struct FlopWetness {
+	double share;   // share of the 1,176 hands in FLUSH | STRAIGHT | FD | OESD | GUT (0 .. 1)
+	int types;      // how many of the five main types occur at all (0 .. 5); BDFD is only in count[5]
+	int count[6];   // hands per type, in the order FLUSH STRAIGHT FD OESD GUT BDFD (a hand can be in several)
+};
+
+static inline int hand_types(const int board[3], int h0, int h1) {
+	const int cards[5] = {board[0], board[1], board[2], h0, h1};
+	int suits[4] = {0, 0, 0, 0}, hole_suits[4] = {0, 0, 0, 0};
+	unsigned ranks = 0;  // bit r = rank r present (0 = deuce .. 12 = ace); the ace is also looked at as rank -1
+	for (int i = 0; i < 5; i++) {
+		suits[cards[i] & 3]++;
+		if (i >= 3) hole_suits[cards[i] & 3]++;
+		ranks |= 1u << (cards[i] >> 2);
 	}
-	const int flush_pts = f.suit_kind == 2 ? 2 : (f.suit_kind == 1 ? 1 : 0);
-	if (d.size() < 2) return 2;  // trips: medium by definition (the board is static, there is no draw to speak of, but it is not dry either)
-	const int straight_pts = span <= 2 ? 2 : (span <= 4 ? 1 : 0);
-	return flush_pts + straight_pts;
+	int t = 0;
+	for (int s = 0; s < 4; s++) {
+		if (suits[s] >= 5) t |= T_FLUSH;
+		else if (suits[s] == 4 && hole_suits[s] >= 1) t |= T_FD;
+		else if (suits[s] == 3 && hole_suits[s] >= 1) t |= T_BDFD;
+	}
+	// windows of five consecutive ranks: A-5 (ace low), 2-6, ..., T-A
+	int made = 0, four = 0;
+	for (int w = -1; w <= 8; w++) {
+		int present = 0;
+		for (int k = 0; k < 5; k++) {
+			const int r = w + k;
+			present += r < 0 ? ((ranks >> 12) & 1) : ((ranks >> r) & 1);
+		}
+		if (present == 5) made = 1;
+		else if (present == 4) four++;
+	}
+	if (made) t |= T_STRAIGHT;
+	else if (four >= 2) t |= T_OESD;
+	else if (four == 1) t |= T_GUT;
+	return t;
 }
+
+static inline FlopWetness flop_wetness_detail(const Flop& f) {
+	FlopWetness w;
+	w.share = 0;
+	w.types = 0;
+	for (int i = 0; i < 6; i++) w.count[i] = 0;
+	int hands = 0, in_share = 0, seen = 0;
+	for (int a = 0; a < 52; a++) {
+		if (a == f.cards[0] || a == f.cards[1] || a == f.cards[2]) continue;
+		for (int b = a + 1; b < 52; b++) {
+			if (b == f.cards[0] || b == f.cards[1] || b == f.cards[2]) continue;
+			const int t = hand_types(f.cards, a, b);
+			hands++;
+			if (t & (T_FLUSH | T_STRAIGHT | T_FD | T_OESD | T_GUT)) in_share++;
+			for (int i = 0; i < 6; i++)
+				if (t & (1 << i)) { w.count[i]++; seen |= 1 << i; }
+		}
+	}
+	for (int i = 0; i < 5; i++) w.types += (seen >> i) & 1;  // the five main types; a backdoor flush draw is too weak to count as a type
+	w.share = (double)in_share / hands;
+	return w;
+}
+
+// 0 = 乾 (hardly any hand makes a new type), 1 = 偏乾, 2 = 中, 3 = 濕, 4 = 很濕 (about 4 hands in 10 or more draw or make).
+static inline int flop_wetness(const Flop& f) {
+	const double sh = flop_wetness_detail(f).share;
+	return sh < 0.03 ? 0 : (sh < 0.12 ? 1 : (sh < 0.25 ? 2 : (sh < 0.40 ? 3 : 4)));
+}
+static inline double flop_wetness_share(const Flop& f) { return flop_wetness_detail(f).share; }
 static inline const char* flop_wetness_name(int w) {
 	static const char* n[5] = {"乾", "偏乾", "中", "濕", "很濕"};
 	return n[w];
@@ -270,7 +340,9 @@ static inline const char* flop_wetness_name(int w) {
 //   1. broadway cards (T J Q K A) on the board: 0高 / 1高 / 2高 / 3高
 //   2. pairing: 未成對 / 成對 / 三條
 //   3. suits: 彩虹 (three suits) / 雙花 (two suits: a flush draw) / 單色 (one suit: a flush board, "天花")
-//   4. straight structure, unpaired boards only (ace counts high and low): 順緊 span <= 2 / 順可 3-4 / 順聽 5-6 / 順遠 >= 7
+//   4. straight structure, unpaired boards only (ace counts high and low): 順緊 all three within span <= 2 / 順可 span 3-4 /
+//      順聽 wider, but two of the cards fit in one window of five ranks (their gap is <= 4: J-T-2, K-9-3): draws exist /
+//      順遠 every two cards are 5 or more apart (K-7-2): no straight and no straight draw is possible with two hole cards
 //      ("dry" and "wet" are not a category: they are a result of the suits and the straight structure, see flop_wetness)
 //   5. the highest card: A高 / K高 / Q高 / JT高 / 98高 / 7低 (7 or lower)
 //   6. two-tone boards only: 花含頂牌 (the two suited cards include the highest card) / 花不含頂牌
@@ -299,8 +371,8 @@ static inline std::string flop_group_name(const Flop& f, int depth = 6) {
 	if (depth >= 4) {
 		const int sp = flop_span_ace_low(f);
 		// straight structure of the board (a fact about the ranks; "dry" and "wet" are RESULTS, see flop_wetness):
-		// span <= 2 tight, 3-4 a straight is possible with two hole cards, 5-6 only draws, >= 7 far apart
-		n += std::string("|") + (f.paired ? "-" : (sp <= 2 ? "順緊" : (sp <= 4 ? "順可" : (sp <= 6 ? "順聽" : "順遠"))));
+		// span <= 2 tight; 3-4 a straight is possible with two hole cards; wider but two cards share a five-rank window (gap <= 4): draws; else no straight draw at all
+		n += std::string("|") + (f.paired ? "-" : (sp <= 2 ? "順緊" : (sp <= 4 ? "順可" : (flop_min_gap_ace_low(f) <= 4 ? "順聽" : "順遠"))));
 	}
 	if (depth >= 5) {
 		const int h = f.high;

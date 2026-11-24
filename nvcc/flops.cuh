@@ -237,12 +237,39 @@ static inline int flop_span_ace_low(const Flop& f) {
 	return span;
 }
 
+// -- wetness: a RESULT, not a category ------------------------------------------------------------------------------
+// How many draws a board offers. Points from the flush side (rainbow 0, two-tone 1, monotone 2) and from the straight
+// side, measured on the DISTINCT ranks of the board with the ace both high and low (span <= 2: 2 points; 3-4: 1; else 0).
+// A paired board has only two distinct ranks, so its straight side is the span of those two (98x9 is tight), and a
+// paired board with a flush draw and a straight draw is wet. 0 = 乾, 1 = 偏乾, 2 = 中, 3 = 濕, 4 = 很濕.
+static inline int flop_wetness(const Flop& f) {
+	int r[3] = {f.cards[0] >> 2, f.cards[1] >> 2, f.cards[2] >> 2};
+	std::sort(r, r + 3);
+	std::vector<int> d;
+	for (int i = 0; i < 3; i++)
+		if (d.empty() || d.back() != r[i]) d.push_back(r[i]);
+	int span = d.back() - d.front();
+	if (d.back() == 12) {  // the ace also plays low
+		std::vector<int> l;
+		for (int x : d) l.push_back(x == 12 ? -1 : x);
+		span = std::min(span, *std::max_element(l.begin(), l.end()) - *std::min_element(l.begin(), l.end()));
+	}
+	const int flush_pts = f.suit_kind == 2 ? 2 : (f.suit_kind == 1 ? 1 : 0);
+	const int straight_pts = span <= 2 ? 2 : (span <= 4 ? 1 : 0);
+	return flush_pts + straight_pts;
+}
+static inline const char* flop_wetness_name(int w) {
+	static const char* n[5] = {"乾", "偏乾", "中", "濕", "很濕"};
+	return n[w];
+}
+
 // -- a named taxonomy: the refinement of the 1,755 into groups people can name ------------------------------------
 // Every flop falls into one group of a fixed hierarchy; the levels, in this order:
 //   1. broadway cards (T J Q K A) on the board: 0高 / 1高 / 2高 / 3高
 //   2. pairing: 未成對 / 成對 / 三條
 //   3. suits: 彩虹 (three suits) / 雙花 (two suits: a flush draw) / 單色 (one suit: a flush board, "天花")
-//   4. connectedness, unpaired boards only (ace counts high and low): 連張 span <= 2 / 近連 3-4 / 半連 5-6 / 乾燥 >= 7
+//   4. straight structure, unpaired boards only (ace counts high and low): 順緊 span <= 2 / 順可 3-4 / 順聽 5-6 / 順遠 >= 7
+//      ("dry" and "wet" are not a category: they are a result of the suits and the straight structure, see flop_wetness)
 //   5. the highest card: A高 / K高 / Q高 / JT高 / 98高 / 7低 (7 or lower)
 //   6. two-tone boards only: 花含頂牌 (the two suited cards include the highest card) / 花不含頂牌
 // A group is the set of flops that agree on all levels, e.g. "2高|未成對|雙花|近連|K高|花含頂牌". Groups beyond what
@@ -269,7 +296,9 @@ static inline std::string flop_group_name(const Flop& f, int depth = 6) {
 	if (depth >= 3) n += std::string("|") + (f.suit_kind == 0 ? "彩虹" : (f.suit_kind == 1 ? "雙花" : "單色"));
 	if (depth >= 4) {
 		const int sp = flop_span_ace_low(f);
-		n += std::string("|") + (f.paired ? "-" : (sp <= 2 ? "連張" : (sp <= 4 ? "近連" : (sp <= 6 ? "半連" : "乾燥"))));
+		// straight structure of the board (a fact about the ranks; "dry" and "wet" are RESULTS, see flop_wetness):
+		// span <= 2 tight, 3-4 a straight is possible with two hole cards, 5-6 only draws, >= 7 far apart
+		n += std::string("|") + (f.paired ? "-" : (sp <= 2 ? "順緊" : (sp <= 4 ? "順可" : (sp <= 6 ? "順聽" : "順遠"))));
 	}
 	if (depth >= 5) {
 		const int h = f.high;
@@ -286,6 +315,7 @@ struct FlopTaxonomy {
 	std::vector<std::string> name;   // group names
 	std::vector<Flop> rep;           // one representative per group (the member closest to the others), weight = the group's
 	std::vector<int> group_of;       // size 1755: group of class i of all_flops()
+	std::vector<double> wetness;     // per group: the weighted mean wetness of its members, 0 (dry) .. 4 (very wet): the group's place on the dry-wet spectrum
 };
 
 static inline FlopTaxonomy flop_taxonomy(int k) {
@@ -366,5 +396,10 @@ static inline FlopTaxonomy flop_taxonomy(int k) {
 		out.rep[g] = all[bi];
 		out.rep[g].weight = (int)gw[g];
 	}
+	// the dry-wet spectrum: wetness is a result computed per flop; a group sits at the weighted mean of its members
+	out.wetness.assign(names.size(), 0.0);
+	for (int i = 0; i < n; i++) out.wetness[out.group_of[i]] += (double)all[i].weight * flop_wetness(all[i]);
+	for (size_t g = 0; g < names.size(); g++) out.wetness[g] /= (double)gw[g];
 	return out;
 }
+

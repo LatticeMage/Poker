@@ -125,7 +125,7 @@ export function pushFoldChart(stackBb: number): PushFoldChart {
 		exploitability_bb: table.exploitability_bb,
 		samples_per_matchup: samplesPerMatchup(),
 		note:
-			'Approximation by fictitious play on a Monte Carlo equity matrix. Push/fold is a good model ' +
+			'Solved with CFR+ on an exact equity matrix (cEV, no ICM). Push/fold is a good model ' +
 			'only up to about 10bb; deeper, players also raise or limp.'
 	};
 }

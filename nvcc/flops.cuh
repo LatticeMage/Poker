@@ -477,3 +477,125 @@ static inline FlopTaxonomy flop_taxonomy(int k) {
 	return out;
 }
 
+
+// -- the order by characteristics -------------------------------------------------------------------------------
+// The order the 1,755 classes are listed in, level by level (the user's scheme, 2026-11-24):
+//   1. 色數: 單色 (one suit) / 雙花 (two suits) / 三花 (three suits)
+//   2. 高數: how many of the three cards are high (T J Q K A): 3 / 2 / 1 / 0
+//   3. 高連度: how connected the high cards are    4. 低連度: the same for the low cards (2..9)
+//   5. 高低連度: the closest a high card comes to a low card (the ace also as the card under the deuce: A2345)
+//   6. 同花的兩張 (two-tone only): both high / one high one low / both low
+// No level looks at WHICH card is the highest: a high card is any of T..A, nothing finer.
+// Connectedness of two cards: 對 same rank / 連 adjacent / 跳 two to four apart (one straight still holds both) /
+// 斷 five or more apart (no straight holds both). Of three cards: 三條, 對＋連, 對＋跳, 對＋斷, 三連, 一連一跳, 兩跳,
+// 一連一斷, 一跳一斷, 全斷. Wet and dry are NOT a level: they are a result (flop_wetness_detail), listed beside each flop.
+struct FlopShape {
+	int suits;                 // 1 單色, 2 雙花, 3 三花
+	int n_high;                // cards T..A
+	int high_conn, high_fine;  // connectedness code of the high cards (0: fewer than two of them), exact gaps for the order inside it
+	int low_conn, low_fine;    // the same for the low cards
+	int hl_conn, hl_dist;      // 0 none (all high or all low), 1 連, 2 跳, 3 斷; and the distance itself
+	int suited, suited_fine;   // two-tone: 1 雙高, 2 一高一低, 3 雙低 (else 0); the suited ranks for the order inside it
+	int gap_top, gap_low;      // rank differences: highest - middle, middle - lowest
+};
+
+static inline int flop_conn2(int d) { return d == 0 ? 1 : (d == 1 ? 2 : (d <= 4 ? 3 : 4)); }  // 對 連 跳 斷
+
+// r: n ranks, high to low
+static inline void flop_group_conn(const int* r, int n, int& code, int& fine) {
+	code = 0; fine = 0;
+	if (n == 2) { code = flop_conn2(r[0] - r[1]); fine = r[0] - r[1]; }
+	if (n == 3) {
+		const int g1 = r[0] - r[1], g2 = r[1] - r[2], a = flop_conn2(g1), b = flop_conn2(g2);
+		fine = (g1 + g2) * 64 + g1;
+		if (a == 1 && b == 1) code = 10;                       // 三條
+		else if (a == 1 || b == 1) code = 9 + (a == 1 ? b : a);  // 對＋連 11, 對＋跳 12, 對＋斷 13
+		else {
+			const int lo = std::min(a, b), hi = std::max(a, b);  // 2 連, 3 跳, 4 斷
+			code = lo == 2 ? (hi == 2 ? 14 : (hi == 3 ? 15 : 17)) : (lo == 3 ? (hi == 3 ? 16 : 18) : 19);
+		}
+	}
+}
+
+static inline const char* flop_conn_name(int code) {
+	switch (code) {
+		case 1: return "對"; case 2: return "連"; case 3: return "跳"; case 4: return "斷";
+		case 10: return "三條"; case 11: return "對＋連"; case 12: return "對＋跳"; case 13: return "對＋斷";
+		case 14: return "三連"; case 15: return "一連一跳"; case 16: return "兩跳";
+		case 17: return "一連一斷"; case 18: return "一跳一斷"; case 19: return "全斷";
+	}
+	return "-";
+}
+
+static inline FlopShape flop_shape(const Flop& f) {
+	FlopShape s;
+	int c[3] = {f.cards[0], f.cards[1], f.cards[2]};
+	std::sort(c, c + 3, [](int a, int b) { return a > b; });
+	int hi[3], lo[3], nh = 0, nl = 0;
+	for (int i = 0; i < 3; i++) {
+		if ((c[i] >> 2) >= 8) hi[nh++] = c[i] >> 2;
+		else lo[nl++] = c[i] >> 2;
+	}
+	s.suits = f.suit_kind == 2 ? 1 : (f.suit_kind == 1 ? 2 : 3);
+	s.n_high = nh;
+	flop_group_conn(hi, nh, s.high_conn, s.high_fine);
+	flop_group_conn(lo, nl, s.low_conn, s.low_fine);
+	s.hl_conn = 0; s.hl_dist = 0;
+	if (nh && nl) {
+		int d = hi[nh - 1] - lo[0];                      // the lowest high card to the highest low card
+		if (hi[0] == 12) d = std::min(d, lo[nl - 1] + 1);  // the ace under the lowest card
+		s.hl_dist = d;
+		s.hl_conn = d == 1 ? 1 : (d <= 4 ? 2 : 3);
+	}
+	s.suited = 0; s.suited_fine = 0;
+	if (s.suits == 2) {
+		int cnt[4] = {0, 0, 0, 0};
+		for (int i = 0; i < 3; i++) cnt[c[i] & 3]++;
+		int nsh = 0, key = 0;
+		for (int i = 0; i < 3; i++)
+			if (cnt[c[i] & 3] == 2) { nsh += (c[i] >> 2) >= 8; key = key * 13 + (c[i] >> 2); }
+		s.suited = nsh == 2 ? 1 : (nsh == 1 ? 2 : 3);
+		s.suited_fine = 168 - key;   // the higher suited cards first
+	}
+	s.gap_top = (c[0] >> 2) - (c[1] >> 2);
+	s.gap_low = (c[1] >> 2) - (c[2] >> 2);
+	return s;
+}
+
+// The name of a flop's group down to a level (1..6), e.g. "單色｜2高｜高跳", "雙花｜3高｜高對＋跳｜同花雙高".
+static inline std::string flop_shape_name(const Flop& f, int depth = 4) {
+	const FlopShape s = flop_shape(f);
+	std::string n = s.suits == 1 ? "單色" : (s.suits == 2 ? "雙花" : "三花");
+	if (depth >= 2) n += std::string("｜") + (char)('0' + s.n_high) + "高";
+	if (depth >= 3 && s.high_conn) n += std::string("｜高") + flop_conn_name(s.high_conn);
+	if (depth >= 4 && s.low_conn) n += std::string("｜低") + flop_conn_name(s.low_conn);
+	if (depth >= 5 && s.hl_conn) n += std::string("｜高低") + (s.hl_conn == 1 ? "連" : (s.hl_conn == 2 ? "跳" : "斷"));
+	if (depth >= 6 && s.suited) n += std::string("｜同花") + (s.suited == 1 ? "雙高" : (s.suited == 2 ? "高低" : "雙低"));
+	return n;
+}
+
+// The classes of all_flops() in the order of the levels above (indices into all_flops()); inside a group of all six
+// levels: tighter gaps first, then higher cards first.
+static inline std::vector<int> flop_shape_order() {
+	const std::vector<Flop>& all = all_flops();
+	std::vector<FlopShape> s;
+	for (const Flop& f : all) s.push_back(flop_shape(f));
+	std::vector<int> order(all.size());
+	for (size_t i = 0; i < order.size(); i++) order[i] = (int)i;
+	auto key = [&](int i, int k[16]) {
+		const FlopShape& x = s[i];
+		int c[3] = {all[i].cards[0] >> 2, all[i].cards[1] >> 2, all[i].cards[2] >> 2};
+		std::sort(c, c + 3);
+		const int v[16] = {x.suits, -x.n_high, x.high_conn, x.low_conn, x.hl_conn, x.suited, x.high_fine, x.low_fine,
+		                   x.hl_dist, x.suited_fine, -c[2], -c[1], -c[0], i, 0, 0};
+		for (int j = 0; j < 16; j++) k[j] = v[j];
+	};
+	std::sort(order.begin(), order.end(), [&](int a, int b) {
+		int ka[16], kb[16];
+		key(a, ka); key(b, kb);
+		for (int j = 0; j < 16; j++)
+			if (ka[j] != kb[j]) return ka[j] < kb[j];
+		return false;
+	});
+	return order;
+}

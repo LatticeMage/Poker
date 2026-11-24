@@ -251,6 +251,43 @@ int main() {
 		       w_two_sub / 22100);
 	}
 
+	{
+		// the order by characteristics: suits -> high cards -> connectedness of the high cards -> of the low cards -> ...
+		const std::vector<int> order = flop_shape_order();
+		std::set<int> seen(order.begin(), order.end());
+		check(order.size() == 1755 && seen.size() == 1755 && *seen.begin() == 0 && *seen.rbegin() == 1754,
+		      "the order by characteristics lists every one of the 1,755 classes once");
+		const int want[6] = {3, 12, 28, 55, 93, 108};
+		bool counts = true, contiguous = true;
+		for (int depth = 1; depth <= 6; depth++) {
+			std::set<std::string> names;
+			std::string last;
+			int runs = 0;
+			for (int i : order) {
+				const std::string n = flop_shape_name(f[i], depth);
+				names.insert(n);
+				if (n != last) { runs++; last = n; }
+			}
+			counts = counts && (int)names.size() == want[depth - 1];
+			contiguous = contiguous && runs == (int)names.size();
+		}
+		check(counts, "groups per level: 3 suits, 12 with the high cards, 28, 55, 93, 108");
+		check(contiguous, "in the order every group of every level is one unbroken run");
+		auto name_of = [&](const char* flop, int depth) {
+			for (const Flop& x : f)
+				if (flop_name(x) == flop) return flop_shape_name(x, depth);
+			return std::string("?");
+		};
+		check(name_of("AsQs3s", 4) == "單色｜2高｜高跳" && name_of("KsQs6s", 4) == "單色｜2高｜高連" && name_of("KsJsTs", 4) == "單色｜3高｜高一連一跳",
+		      "A-Q-3 two high cards with a gap, K-Q-6 two connected high cards, K-J-T three high cards");
+		check(name_of("AsAhJs", 6) == "雙花｜3高｜高對＋跳｜同花雙高" && name_of("AsKsKh", 6) == "雙花｜3高｜高對＋連｜同花雙高",
+		      "A-A-J a pair with a gap, A-K-K a pair with a connected card, both with two high cards suited");
+		check(name_of("4s3s2s", 4) == "單色｜0高｜低三連" && name_of("6s4s3s", 4) == "單色｜0高｜低一連一跳" && name_of("Kd7h2s", 5) == "三花｜1高｜低斷｜高低斷",
+		      "4-3-2 three low in a row, 6-4-3 one connected one gapped, K-7-2 nothing connects");
+		check(name_of("Ad5h4s", 5) == "三花｜1高｜低連｜高低跳" && name_of("Ad3h2s", 5) == "三花｜1高｜低連｜高低連",
+		      "the ace connects under the low cards (A2345)");
+	}
+
 	printf(failures ? "FAIL\n" : "PASS\n");
 	return failures ? 1 : 0;
 }

@@ -1,6 +1,9 @@
 <!--
 	Pick a few cards: a row of slots and a deck to click. The highlighted slot takes the next card
 	and the highlight moves on. `blocked` cards (used elsewhere) cannot be picked.
+
+	The picker owns no cards: it shows `cards` and reports each change through `onpick(slot, card)`,
+	so the slots can come from separate pieces of state (a board and a hand) joined only for display.
 -->
 
 <script lang="ts">
@@ -16,7 +19,8 @@
 	} from '$lib/utils/cards';
 
 	let {
-		cards = $bindable(),
+		cards,
+		onpick,
 		labels,
 		name,
 		blocked = new Set<Card>(),
@@ -24,6 +28,8 @@
 		groups
 	}: {
 		cards: (Card | null)[];
+		/** A slot was given a card, or emptied (null). */
+		onpick: (index: number, card: Card | null) => void;
 		/** Names this picker's deck for assistive tech and tests: "Flop", "Hand". */
 		name: string;
 		/** One label per slot, e.g. ["Flop 1", "Flop 2", "Flop 3"]. */
@@ -43,14 +49,15 @@
 	const gone = $derived(new Set([...blocked, ...mine]));
 
 	function put(card: Card) {
-		cards[cursor] = card;
 		// Move to the next empty slot, else the next slot.
 		const empty = cards.findIndex((c, i) => i !== cursor && c === null);
-		cursor = empty >= 0 ? empty : (cursor + 1) % cards.length;
+		const next = empty >= 0 ? empty : (cursor + 1) % cards.length;
+		onpick(cursor, card);
+		cursor = next;
 	}
 
 	function clearSlot(index: number) {
-		cards[index] = null;
+		onpick(index, null);
 		cursor = index;
 	}
 </script>

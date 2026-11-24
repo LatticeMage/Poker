@@ -788,7 +788,8 @@ static void finish_cells(SimResult& r, int nscn) {
 // Runs `nboards` random boards for the ranges ip / oop (169 class weights) in every scenario.
 // seed fixes the boards; board0 is the first board number (so a run can be continued).
 static SimResult simulate(const std::vector<double>& ip, const std::vector<double>& oop, const std::vector<Scn>& scns,
-                          long long nboards, uint64_t seed, bool verbose, const Pol* pol = nullptr) {
+                          long long nboards, uint64_t seed, bool verbose, const Pol* pol = nullptr,
+                          const std::string& ckpt = "", int chunk_boards = 1024, uint64_t stop_after = 0) {
 	SimResult res;
 	const int nscn = (int)scns.size();
 	set_policy(pol ? *pol : default_pol());
@@ -805,7 +806,7 @@ static SimResult simulate(const std::vector<double>& ip, const std::vector<doubl
 	int sms = 0, per_sm = 0;
 	CK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, 0));
 	CK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, rz_kernel, NT, 0));
-	const int chunk = 1024;
+	const int chunk = chunk_boards;
 	const int grid = std::max(1, std::min(chunk, sms * std::max(1, per_sm)));
 	CK(cudaDeviceSetLimit(cudaLimitStackSize, 16384));
 	CK(cudaMalloc(&d_scratch, (size_t)grid * N_SLOTS * NC * 4));
@@ -815,6 +816,31 @@ static SimResult simulate(const std::vector<double>& ip, const std::vector<doubl
 	std::vector<double> diag((size_t)chunk * nscn * DIAG_N);
 	res.acc.assign((size_t)nscn * 2 * NCLASS * ACC_N, 0.0);
 	auto t0 = std::chrono::steady_clock::now();
+	// relay: an interrupted run carries on from its last saved chunk of boards (the state is all on the host)
+	Relay relay;
+	relay.path = ckpt;
+	relay.stop_after = stop_after;
+	{
+		const Pol used = pol ? *pol : default_pol();
+		uint64_t h = relay_hash_u64(relay_hash_u64(relay_hash_u64(3, (uint64_t)nboards), seed), (uint64_t)nscn);
+		h = relay_hash(h, ip.data(), ip.size() * sizeof(double));
+		h = relay_hash(h, oop.data(), oop.size() * sizeof(double));
+		h = relay_hash(h, scns.data(), scns.size() * sizeof(Scn));
+		relay.tag = relay_hash(h, &used, sizeof used);
+	}
+	relay.save_state = [&](FILE* f) {
+		const double head[5] = {(double)res.boards, res.err_prob, res.err_chips, res.err_inv, res.err_raw};
+		fwrite(head, sizeof head, 1, f);
+		fwrite(res.acc.data(), sizeof(double), res.acc.size(), f);
+	};
+	relay.load_state = [&](FILE* f) {
+		double head[5];
+		if (fread(head, sizeof head, 1, f) != 1) return false;
+		if (fread(res.acc.data(), sizeof(double), res.acc.size(), f) != res.acc.size()) return false;
+		res.boards = (long long)head[0];
+		res.err_prob = head[1]; res.err_chips = head[2]; res.err_inv = head[3]; res.err_raw = head[4];
+		return true;
+	};
 	dispatch((uint64_t)nboards, (uint64_t)chunk, [&](uint64_t first, uint64_t count) {
 		const long long b0 = (long long)first;
 		const int nb = (int)count;
@@ -851,7 +877,7 @@ static SimResult simulate(const std::vector<double>& ip, const std::vector<doubl
 			printf("  %lld/%lld boards  %.1fs\n", res.boards, nboards, secs);
 			fflush(stdout);
 		}
-	});
+	}, "boards", false, &relay);
 	res.secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 	cudaFree(d_wi); cudaFree(d_wo); cudaFree(d_scn); cudaFree(d_scratch); cudaFree(d_stats); cudaFree(d_diag);
 	finish_cells(res, nscn);
@@ -974,9 +1000,10 @@ static PotRun make_run(const PotDef& def) {
 	return r;
 }
 
-static PotRun run_pot(const PotDef& def, long long boards, uint64_t seed, bool verbose, const Pol* pol = nullptr) {
+static PotRun run_pot(const PotDef& def, long long boards, uint64_t seed, bool verbose, const Pol* pol = nullptr,
+                      const std::string& ckpt = "") {
 	PotRun r = make_run(def);
-	r.res = simulate(def.ip, def.oop, r.scns, boards, seed, verbose, pol);
+	r.res = simulate(def.ip, def.oop, r.scns, boards, seed, verbose, pol, ckpt);
 	return r;
 }
 

@@ -261,6 +261,18 @@ int main(int argc, char** argv) {
 			SimResult a = simulate(pots[0].ip, pots[0].oop, sc, 600, 4242, false);
 			SimResult b = simulate(pots[0].ip, pots[0].oop, sc, 600, 4242, false);
 			SimResult c = simulate(pots[0].ip, pots[0].oop, sc, 600, 4243, false);
+			{  // relay: stopped after one chunk of 100 boards, then carried on, equals an uninterrupted run exactly
+				const std::string ck = "/tmp/test_realization.relay";
+				remove(ck.c_str());
+				SimResult whole = simulate(pots[0].ip, pots[0].oop, sc, 300, 77, false, nullptr, "", 100);
+				SimResult part = simulate(pots[0].ip, pots[0].oop, sc, 300, 77, false, nullptr, ck, 100, 1);
+				SimResult rest = simulate(pots[0].ip, pots[0].oop, sc, 300, 77, false, nullptr, ck, 100);
+				bool same = whole.acc.size() == rest.acc.size() && rest.boards == 300 && part.boards == 100;
+				for (size_t i = 0; i < whole.acc.size() && same; i++) same = whole.acc[i] == rest.acc[i];
+				printf("%s relay: stopped after 100 of 300 boards, carried on: %s\n", same ? "ok  " : "BAD ", same ? "identical to the uninterrupted run" : "differs");
+				failures += !same;
+				remove(ck.c_str());
+			}
 			check(a.acc == b.acc, "same seed: bit-identical results");
 			check(a.acc != c.acc, "different seed: different boards");
 		}

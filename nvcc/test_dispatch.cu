@@ -5,6 +5,7 @@
 
 #include "dispatch.cuh"
 
+#include <csignal>
 #include <vector>
 
 static int g_reads = 0;
@@ -52,20 +53,20 @@ int main() {
 	g_temp = 70;
 	int temp_at_launch = 0;
 	n = dispatch(1, 1, [&](uint64_t, uint64_t) { temp_at_launch = g_temp; });
-	check(n == 1 && temp_at_launch <= 52, "hot card (70 C): the batch starts only once it is at or below 52 C");
+	check(n == 1 && temp_at_launch <= 45, "hot card (70 C): the batch starts only once it is at or below 45 C");
 
-	// 4b. a task starts only when cool, but once running it goes on until 60 C
+	// 4b. a task starts only when cool, but once running it goes on until 63 C
 	g_reads = 0;
-	g_temp = 56;  // between 52 and 60: not cool enough to start
+	g_temp = 62;  // between 45 and 63: not cool enough to start
 	int temps_seen[3] = {0, 0, 0};
 	int calls = 0;
 	auto reheat = [&](uint64_t, uint64_t) {
 		temps_seen[calls++] = g_temp;
-		g_temp = 56;  // the card heats back up to 56 C during every batch
+		g_temp = 62;  // the card heats back up to 62 C during every batch
 	};
 	n = dispatch(3, 1, reheat);
-	check(n == 3 && temps_seen[0] <= 52, "starting at 56 C: the first batch waits until 52 C");
-	check(temps_seen[1] == 56 && temps_seen[2] == 56, "later batches of the running task go on at 56 C (below the 60 C limit)");
+	check(n == 3 && temps_seen[0] <= 45, "starting at 62 C: the first batch waits until 45 C");
+	check(temps_seen[1] == 62 && temps_seen[2] == 62, "later batches of the running task go on at 62 C (below the 63 C limit)");
 
 	// 5. the work of a batch sees the order of the batches (nothing is launched out of order)
 	std::vector<uint64_t> firsts;
@@ -134,6 +135,63 @@ int main() {
 		FILE* t = fopen("/tmp/test_dispatch.ckpt.tmp", "rb");
 		check(t == nullptr, "relay: no half-written .tmp file is left behind");
 		if (t) fclose(t);
+		remove(path);
+	}
+
+	// 7. eviction: SIGTERM arrives in the middle of a batch; dispatch finishes that batch, saves, and stops
+	{
+		const char* path = "/tmp/test_dispatch_evict.ckpt";
+		remove(path);
+		uint64_t sum = 0;
+		bool sent = false;
+		auto work = [&](uint64_t first, uint64_t count) {
+			for (uint64_t i = first; i < first + count; i++) sum += i + 1;
+			if (first == 14 && !sent) {  // the third batch of 7: the GPU got too hot, gpu-cooler.sh sends SIGTERM
+				sent = true;
+				raise(SIGTERM);
+			}
+		};
+		auto make = [&](Relay& r) {
+			r.path = path;
+			r.tag = 9;
+			r.return_on_stop = true;
+			r.save_state = [&](FILE* f) { fwrite(&sum, 8, 1, f); };
+			r.load_state = [&](FILE* f) { return fread(&sum, 8, 1, f) == 1; };
+		};
+		const uint64_t want = 100 * 101 / 2;
+		Relay a;
+		make(a);
+		sum = 0;
+		n = dispatch(100, 7, work, "", false, &a);
+		check(n == 3 && a.done == 21, "eviction: SIGTERM in the third batch: that batch is finished (21 items) and saved, then it stops");
+		dispatch_clear_stop();
+		sum = 424242;  // a new process: the state must come from the file
+		Relay b;
+		make(b);
+		n = dispatch(100, 7, work, "", false, &b);
+		check(n == 12 && sum == want, "eviction: the rerun reloads the state from the file and carries on to the same result");
+		remove(path);
+	}
+
+	// 8. the files are the truth: before every batch starts, the relay file already holds all the earlier batches
+	{
+		const char* path = "/tmp/test_dispatch_every.ckpt";
+		remove(path);
+		uint64_t sum = 0;
+		bool always_current = true;
+		uint64_t seen = 0;
+		Relay r;
+		r.path = path;
+		r.tag = 11;  // every_s is left at its default: save after every batch
+		r.save_state = [&](FILE* f) { fwrite(&sum, 8, 1, f); };
+		r.load_state = [&](FILE* f) { return fread(&sum, 8, 1, f) == 1; };
+		dispatch(50, 7, [&](uint64_t first, uint64_t count) {
+			if (first > 0) always_current = always_current && relay_peek_done(path) == first;
+			seen++;
+			sum += count;
+		}, "", false, &r);
+		check(always_current && seen == 8 && relay_peek_done(path) == 50,
+		      "relay: before each of the 8 batches starts, the file already holds every earlier batch (saved after every batch)");
 		remove(path);
 	}
 

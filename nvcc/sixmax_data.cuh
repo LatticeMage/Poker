@@ -231,6 +231,11 @@ static void init_probs(const Node6& nd, const Source& src, int h, double* kp /*[
 			kp[0] = 1 - kp[1] - kp[2];
 			break;
 		}
+		case NT_FACE3C: {  // a caller meets the squeeze after the opener folded: part of the hands that cold-called keep calling
+			kp[1] = 0.4 * at(src.vo_call[nd.player][nd.opener]);
+			kp[0] = 1 - kp[1];
+			break;
+		}
 		case NT_FACE4: {  // the 3-bettor meets a 4-bet: the hands that 3-bet for value continue
 			const int r = nd.player, o = nd.opener;
 			const double b = at(src.vo_bluff[r][o]), v = at(src.vo_value[r][o]);

@@ -70,6 +70,9 @@
 		const seats = chart.seats.filter((s) => s.source !== 'none');
 		const seat = seats[Math.floor(Math.random() * seats.length)];
 		const hand = randomHand();
+		// A solver range mixes some hands: count a hand as a raise when it raises at least half the time.
+		const hands =
+			seat.source === 'solver' ? seat.hands.filter((h) => seat.mix[h] >= 0.5) : seat.hands;
 		question = {
 			players,
 			seatName: seat.name,
@@ -78,8 +81,8 @@
 			label: seat.label,
 			hand,
 			cards: cardsForHand(hand),
-			raise: seat.hands.includes(hand),
-			hands: new Set(seat.hands)
+			raise: hands.includes(hand),
+			hands: new Set(hands)
 		};
 	}
 
@@ -203,7 +206,9 @@
 					<p class="mt-1 text-xs text-slate-300">
 						{question.source === 'computed'
 							? 'This seat has no published chart; its range is computed from the strength order.'
-							: 'Heads-up has no source: this is a stand-in, and real heads-up ranges are wider.'}
+							: question.source === 'solver'
+								? 'Heads-up has no published chart: this is a solver approximation, and a hand counts as a raise when it raises at least half the time.'
+								: 'Heads-up has no source: this is a stand-in, and real heads-up ranges are wider.'}
 					</p>
 				{/if}
 				<div class="mt-3">

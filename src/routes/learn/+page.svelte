@@ -91,8 +91,9 @@
 						callers already in, and play tighter with shallower stacks.
 					</li>
 					<li>
-						<span class="font-semibold text-slate-300">Stand-in</span>: heads-up opening has no
-						source here; real heads-up ranges are wider.
+						<span class="font-semibold text-slate-300">Heads-up opening</span>: no published chart;
+						the small blind's first action (raise, limp or fold, some hands mixed) comes from the
+						solver approximation at about 100bb.
 					</li>
 					<li>
 						<span class="font-semibold text-slate-300">Flop, turn and river (heads-up)</span>:

@@ -455,4 +455,6 @@
 - `nvcc/data/flops-1755.csv` 已照這個順序重排（`index` 欄仍是原本的類別編號），每張附數出來的乾濕度。
 - 各層類群數：3、12、28、55、73、123、146。採用第 5 層的 73 群（解釋 94.6% 的濕度差異）。類群表：`nvcc/data/flops-shape-groups.csv`（73 群）、`flops-shape-groups-7.csv`（146 群）。
 - 184 與 154 相關的程式、指令、測試和資料檔已從 main 移除（`subset_partition`、`flop_taxonomy`、`flops partition/taxonomy/spectrum/levels`、`flops-184-*.csv`、`flops-taxonomy.csv`、`flops-spectrum.csv`）。
-- 依賴 154 群的翻牌加權實現係數分支（`worktree-agent-a6cdb4dabe0adfee4`，未合併）沒有刪，也不再使用；要做的話得改用 73 群重寫。
+- 依賴 154 群的翻牌加權實現係數工作沒有合併，保存在 tag `archive/realization-flops-154`；要做的話得改用 73 群重寫。
+- worktree 已全部清掉，只剩 main。`solve`、`equity3`、`sixmax` 的接力版已合併進 main，合併後在 GPU 機上經 `gpu-run.sh` 重跑
+  `test_solve`、`test_pushfold`、`test_equity3`、`test_sixmax` 全部通過（`test_equity3` 中途被驅逐一次後接續完成）。

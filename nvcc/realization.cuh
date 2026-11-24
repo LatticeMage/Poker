@@ -27,7 +27,7 @@
 #pragma once
 
 #include <cub/cub.cuh>
-#include "poker.cuh"
+#include "dispatch.cuh"
 
 static const int NC = 1326;          // two-card combos
 static const int NT = 256;           // threads per block
@@ -815,8 +815,9 @@ static SimResult simulate(const std::vector<double>& ip, const std::vector<doubl
 	std::vector<double> diag((size_t)chunk * nscn * DIAG_N);
 	res.acc.assign((size_t)nscn * 2 * NCLASS * ACC_N, 0.0);
 	auto t0 = std::chrono::steady_clock::now();
-	for (long long b0 = 0; b0 < nboards; b0 += chunk) {
-		const int nb = (int)std::min<long long>(chunk, nboards - b0);
+	dispatch((uint64_t)nboards, (uint64_t)chunk, [&](uint64_t first, uint64_t count) {
+		const long long b0 = (long long)first;
+		const int nb = (int)count;
 		rz_kernel<<<std::min(grid, nb), NT>>>(d_scn, nscn, d_wi, d_wo, seed, b0, nb, d_scratch, d_stats, d_diag);
 		CK(cudaGetLastError());
 		CK(cudaDeviceSynchronize());
@@ -850,7 +851,7 @@ static SimResult simulate(const std::vector<double>& ip, const std::vector<doubl
 			printf("  %lld/%lld boards  %.1fs\n", res.boards, nboards, secs);
 			fflush(stdout);
 		}
-	}
+	});
 	res.secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 	cudaFree(d_wi); cudaFree(d_wo); cudaFree(d_scn); cudaFree(d_scratch); cudaFree(d_stats); cudaFree(d_diag);
 	finish_cells(res, nscn);

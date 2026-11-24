@@ -1,5 +1,6 @@
 // The one way GPU work is launched: split the work into batches and hand the batches to dispatch().
-// Before every batch it checks the GPU temperature (thermal.cuh) and waits while the card is too hot; it then
+// Before the first batch it waits until the GPU is cool enough to start (<= 52 C), and before every later batch
+// it waits while the card is too hot (>= 60 C, back to <= 52 C); thermal.cuh has the rules. It then
 // runs the batch, waits for it to finish, and reports progress. Tools do not call thermal_gate() themselves.
 //
 //   dispatch(total_items, items_per_batch, [&](uint64_t first, uint64_t count) {
@@ -24,7 +25,7 @@ static inline uint64_t dispatch(uint64_t total, uint64_t per_batch, Launch&& lau
 	double waited = 0;
 	for (uint64_t first = 0; first < total; first += per_batch) {
 		const uint64_t count = std::min<uint64_t>(per_batch, total - first);
-		waited += thermal_gate();
+		waited += thermal_gate(-1, -1, -1, first == 0);  // the first batch is the start of a task
 		launch(first, count);
 		CK(cudaGetLastError());
 		CK(cudaDeviceSynchronize());

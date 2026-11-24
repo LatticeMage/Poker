@@ -17,7 +17,7 @@ static void run(const std::vector<int>& seq, int pause_c, int resume_c, double* 
 	g_seq = seq;
 	g_pos = 0;
 	g_slept = 0;
-	thermal_hooks() = {fake_read, fake_sleep};
+	thermal_hooks() = {fake_read, fake_sleep, 0};
 	*waited = thermal_gate(pause_c, resume_c, 2);
 	*reads = g_pos;
 }
@@ -31,6 +31,22 @@ static void check(bool ok, const char* what) {
 int main() {
 	double w;
 	size_t r;
+
+	// starting a task: only at or below the resume limit
+	g_seq = {55, 54, 52};
+	g_pos = 0;
+	g_slept = 0;
+	thermal_hooks() = {fake_read, fake_sleep, 0};
+	w = thermal_gate(60, 52, 2, true);
+	check(w == 4 && g_pos == 3, "starting at 55 C waits until 52 C (a running task would have gone on at 55)");
+	g_seq = {52};
+	g_pos = 0;
+	w = thermal_gate(60, 52, 2, true);
+	check(w == 0 && g_pos == 1, "starting at exactly the resume limit does not wait");
+	g_seq = {53};
+	g_pos = 0;
+	w = thermal_gate(60, 52, 2, false);
+	check(w == 0, "a task already running goes on at 53 C");
 
 	run({55}, 60, 52, &w, &r);
 	check(w == 0 && r == 1, "below the pause limit: no waiting, one reading");
@@ -54,7 +70,7 @@ int main() {
 	check(r == 2, "a reading lost while waiting ends the wait instead of hanging");
 
 	// the real thermometer (nvidia-smi on this machine)
-	thermal_hooks() = {thermal_read_nvidia_smi, thermal_real_sleep};
+	thermal_hooks() = {thermal_read_nvidia_smi, thermal_real_sleep, 0};
 	int t = thermal_read_nvidia_smi();
 	if (t < 0) printf("  --  real reading unavailable here (no nvidia-smi): skipped\n");
 	else {

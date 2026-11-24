@@ -619,3 +619,142 @@ npm run apply-pushfold && npx prettier --write src/lib/poker/data   # from the r
   evaluator's on the same strategy (3e-15); zero-sum; exploitability bounds; ranges shrink with depth; strong hands
   always in; ranges at 2, 5, 10, 20bb in published regions; JSON lists, percentages and frequencies agree;
   `equity_vs_random` known values and mean exactly 0.5.
+
+# 6-max preflop solver (`sixmax`)
+
+Six-seat preflop charts (UTG, MP, CO, BTN, SB, BB) solved on the GPU: first in, facing an open, facing a 3-bet, with
+mixed frequencies, in the shapes the app displays. **It is an approximation, not an equilibrium of poker**: six players
+(no Nash guarantee), a small action set, realisation factors from a fixed-policy table, and a few rules that remove
+multiway branches (below). The app does not read its output yet.
+
+| File                        | What it is                                                                                                       |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `sixmax.cuh`                | The tree builder, the CFR+ kernels, the `Solver6` class (iterate, best-response gap, checkpoint)                 |
+| `sixmax_data.cuh`           | Inputs: pot-share matrices from `realization.json`, the three-way tensors, the source charts, the start strategy |
+| `sixmax_run.cuh`            | The two stages, reading the result in the app's shapes, the JSON                                                 |
+| `sixmax.cu`                 | Command line                                                                                                     |
+| `test_sixmax.cu`            | Checks (below)                                                                                                   |
+| `data/out/sixmax-<bb>.json` | Result per depth (schema `sixmax/v1`), see "Status of the runs"                                                  |
+
+```bash
+NVCC=/usr/local/cuda/bin/nvcc
+$NVCC -O3 -arch=sm_89 -o sixmax sixmax.cu
+$NVCC -O3 -arch=sm_89 -o test_sixmax test_sixmax.cu
+./sixmax tree 100                                   # nodes of the tree
+./sixmax solve --stack 100 --iters1 3000 --iters 20000 --report 1000 --ckpt data/out/c100 --out data/out
+./test_sixmax                                       # about 2 minutes
+```
+
+Run from `nvcc/`; it reads `data/equity-exact.bin`, `data/equity3.bin`, `data/realization.json` and the source charts
+(`../src/lib/poker/data`, or `POKER_DATA`). `--ckpt PREFIX` writes `PREFIX.ckpt` at every report and resumes stage 2 from
+it (stage 1 is deterministic and cheap, it is simply redone). About 650 nodes, 20 of them three-way showdowns; 1000
+iterations take about 25 s on the RTX 4060 Ti, the setup (the 169^3 tensors) about 20 s.
+
+## The game that is solved
+
+Equal stacks, blinds 0.5 / 1, one tree for the whole hand, all six seats trained at once by vector-form CFR+ (regrets
+floored at 0, strategy sums weighted by the iteration number, as in the heads-up solver) over the 169 hand classes.
+
+| Situation      | Actions                                                                                                                                                                                         |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| first in       | UTG, MP, CO, BTN: fold or raise to **2.5**. SB: fold, limp, or raise to **3** (the source chart's size). Folded to BB: BB wins                                                                  |
+| BB vs SB limp  | check or raise to 4; SB then folds or calls                                                                                                                                                     |
+| facing an open | each seat behind, in turn: fold, call, or 3-bet. 3-bet = **3x** the open when the 3-bettor is in position after the flop, **4x** out of position, plus one open per caller already in (squeeze) |
+| after a 3-bet  | everyone but opener and 3-bettor folds, except that the players who called the open may call a squeeze if the opener folds. Opener: fold, call, 4-bet to **2.2x** the 3-bet                     |
+| after a 4-bet  | 3-bettor: fold, call, all-in. Opener: fold or call the all-in. A raise to 70% of the stack or more is an all-in (at 20bb the 4-bet is)                                                          |
+| limits         | at most two players call an open (a third caller is not allowed); no cold 4-bets, no cold calls of a 3-bet, no 5-bet other than all-in                                                          |
+
+Every decision is its own information set (the strategy after a caller differs from the one without): 257 decisions at
+100bb. The ones the app shows are the "clean" nodes: first in (5), facing an open with nobody in between (15), facing a
+3-bet with no callers (15). `bluff` and `value` of the app are derived: of the hands that 3-bet, the share that folds to a
+4-bet is `bluff`, the rest `value` (same for 4-bets and the all-in).
+
+**Showdowns.** Two players: a pot-share matrix per pot type (limp: the old `realised_ip` heuristic; single-raised, 3-bet,
+4-bet: from `realization.json`; all-in: raw equity). For a table pot type at depth D, IP's expected chips from the flop pot
+are `ev_bb + factor * final_pot * (eq(i,j) - raw)` (the line the realisation section suggests), the same for OOP, and the
+shares used are the average of IP's number and `pot - OOP's number`, so that the pot is always shared out exactly
+(zero-sum); linear between the table's depths (60bb), clamped to [0, 1], applied to the real pot (dead money included).
+Three players (an open called twice): the exact three-way table `equity3`, each player's share multiplied by the
+realisation factor of his class in the single-raised table (the OOP column for the player who acts first after the flop,
+the IP column for the last, the mean for the middle one) and renormalised to 1. This multiway rule is a guess; 4-way pots
+do not exist.
+
+**Card removal.** A value is the expected chips of a hero holding class h, given h. The chance that another player holds
+class j is `Wn[h][j]` (non-clashing combo pairs over combos of h x 1225). Folded players enter by the probability that
+they take the path (`sum_j Wn[h][j] reach[j]`), two players in a showdown by the pair weights, three by the exact triple
+counts of `equity3`. **Approximated**: removal among the _other_ players. The game is therefore zero-sum only up to that;
+the sum of the six players' values is 0.014 bb/hand (stage 1) to 0.047 bb/hand (solved), a few bb/100, and it is exactly 0
+in a game without removal (checked). Treat values to about that precision.
+
+**Starting strategy and stages.** The strategy starts at the source charts (`charts.json` for first in, `spots.json` for
+facing an open / a 3-bet; squeeze nodes copy the facing-open numbers; the BB's raise over a limp and the SB's reply are
+made up), with 2% noise; the regrets are seeded with 1 x that strategy. **Stage 1** trains only the first-in decisions
+with every reply frozen at the source (first-in ranges against replies as in the charts); **stage 2** unfreezes all
+decisions and continues from the stage-1 averages, until the fixed point is reached.
+
+**Convergence number.** After every report the best-response gap of each seat: the value of the best response to the other
+five seats' averaged strategies (all of its decisions at once, hand by hand) minus the value of the averaged strategy, in
+bb per hand (x100 = bb/100). The total is the sum over the six seats (NashConv). In stage 1 frozen decisions play their
+strategy inside the best response, so the number says how well the first-in ranges answer the frozen replies.
+
+## Checks (`test_sixmax`)
+
+1. **Three-player game** (two hand classes, no removal) solved on paper: the value of the profile "continue with H only" is
+   0.75 for H and -1 for L (paper); the engine equals an enumeration of every deal on 20 random profiles for every player
+   and class (difference 2e-16) and a separate best-response search (4e-16); the game is exactly zero-sum; CFR+ drives its
+   gap to 6e-7 with the values still summing to 0.
+2. **Tables**: each hand's chances sum to 1 and are symmetric, AA against AA 1/1225, KK 6/1225, AKs 2/1225, AKo 6/1225;
+   three-way counts sum to combos x 1225 x 1128 for every class, the three layouts hold the same cells and the shares sum
+   to 1; pot shares in [0, 1], AA takes more than 0.8 of a single-raised pot against 72o.
+3. **Independent host evaluator** (plain recursion, direct `equity3` lookups, no tensors) on the real 100bb tree, random
+   profile, 8 classes: values of all six players and best-response values of UTG, SB and BB agree to 7e-15 (largest value
+   7.4 bb). This is the best-response gap checked against a host reference on the full tree.
+4. **Short real run**: frozen decisions never move, first-in decisions do; two runs of 150 iterations are bit-identical;
+   each hand's frequencies sum to 1 (3e-16) and none is negative; best-response gaps are non-negative; zero-sum defect
+   below 0.1 bb; the JSON parses, has 5 + 15 + 15 spots and agrees with the strategies.
+
+## Status of the runs (read this)
+
+The GPU was stopped on request (thermal) while the **final** 100bb run was at about 16,000 of 20,000 iterations, and the
+other depths (20, 40, 60, 80bb) have not been run. So `data/out/sixmax-*.json` is **not committed**; nothing here is
+final. What exists:
+
+- A complete 100bb run of the previous tree version (callers could not answer a squeeze), 3,000 + 20,000 iterations:
+  best-response gap in bb/100 UTG 0.001, MP 0.001, CO 0.001, BTN 0.001, SB 0.003, BB 0.004 (total 0.011); values
+  in bb/100 UTG 11.4, MP 14.3, CO 18.8, BTN 26.9, SB -24.5, BB -42.2. First-in open % solved / source: UTG 14.6 / 14.3, MP
+  18.0 / 18.9, CO 25.2 / 25.5, BTN 39.5 / 43.3, SB raise 40.9 / 33.0 (plus 10.3 limp). 5 to 6.5% of the combos of UTG, MP,
+  CO and BTN differ from their chart (mostly the weakest suited hands dropped, a few offsuit aces added), 20.7% for SB.
+- The run with callers answering a squeeze, same settings, reached a total gap of 0.023 bb/100 at 15,000 iterations
+  (UTG 0.003, MP 0.002, CO 0.001, BTN 0.002, SB 0.006, BB 0.009) when it was stopped. Checkpoint on the box:
+  `/home/ubuntu/app/Github/LatticeMage/Poker/sixmax/data/out/c100b.ckpt`.
+
+To finish, on the box in `/home/ubuntu/app/Github/LatticeMage/Poker/sixmax`:
+`./sixmax solve --stack 100 --iters1 3000 --iters 20000 --report 1000 --ckpt data/out/c100b --out data/out`
+(resumes stage 2 from the checkpoint, about 4,000 iterations left), then `--stack 20`, `40`, `60`, `80` with
+`--iters 10000` (about 5 minutes of GPU each, new `--ckpt` prefix per depth), then copy `data/out/sixmax-<bb>.json` here.
+
+## Things that look implausible (judge them yourself)
+
+From the preliminary 100bb run; the squeeze-answer version may move them.
+
+- **Cold calling is almost absent in position**: BTN calls UTG's open with 1.9%, CO 0.1%, and 3-bets 9% instead of the
+  usual roughly 12% call and 6-7% 3-bet. The model may undervalue a flat (the realisation factors come from a fixed-policy
+  simulation; the squeeze threat is modelled but cold calls of a 3-bet are not). BB vs BTN calls 26.8% against 44.6% in
+  the source chart (3-bet 11.2% against 13.1%); BB defends only 9.7% + 4.9% 3-bet against UTG.
+- **4-bets are wide**: UTG against an MP 3-bet 4-bets 24% (19% as bluffs), against CO 14%, BTN 12% (real solutions are
+  nearer 8 to 10%). The 3-bettor's only answers to a 4-bet are fold, call and all-in.
+- **BTN opens 39.5% against the chart's 43.3%** (too tight by the chart's measure): SB and BB 3-bet it more (SB 16.1%,
+  BB 11.2%) and no cold callers exist. **SB raises 41%** and limps 10%, wider than the 33% chart.
+- Open sizes are fixed (2.5; 3 for SB), so sizing never adapts.
+
+## Limits
+
+- Six players: no equilibrium guarantee; the gap is measured against the others' _averaged_ strategies, and CFR's average
+  profile has no multiplayer theory behind it (it converged smoothly here).
+- Removed branches (cold 4-bets, cold calls of a 3-bet, callers after a 4-bet, a third caller, 4-way pots) are removed for
+  everybody, which biases the model against flatting and for 3-bet bluffs. Their reach is small where measured: the third
+  caller was forbidden in 0.06 to 0.13% of the reach of facing-open decisions.
+- Realisation factors come from `data/realization.json` (read its Limits): fixed policy, one bet size, the 100bb ranges at
+  every depth, IP/OOP by position only (the table was made for SB against BB), no limped pots (old formula) and no
+  multiway pots (the rule above).
+- Stack depth enters only through the sizes (all-in thresholds) and the realisation depth; 20bb is not a push/fold solution.

@@ -11,10 +11,10 @@
 // 5. Sampler symmetry: the sampling kernel on permuted class orders gives permuted answers.
 // 6. A provable identity: with all combos equally likely for all three players, each player averages exactly
 //    1/3 (the players are exchangeable and the shares sum to 1).
-// 8. The relay: sampling, exact enumeration and the generator, stopped and resumed (also from a checkpoint of the old
-//    format), give the same results as an uninterrupted run, bit for bit.
 // 7. The range function: GPU = CPU, permuting the ranges permutes the answers, per-player masses agree, and
 //    against a direct combo-level Monte Carlo on realistic ranges (error reported).
+// 8. The relay: sampling, exact enumeration and the generator, stopped and resumed (also from a checkpoint of the old
+//    format), give the same results as an uninterrupted run, bit for bit.
 
 #include "equity3.cuh"
 

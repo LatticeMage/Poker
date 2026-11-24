@@ -11,7 +11,7 @@ them; it only reads the results.
   `nvcc` is often not on `PATH`; the toolkit usually lives in `/usr/local/cuda/bin`.
 - A host C++ compiler that `nvcc` accepts (`g++`).
 - Heat: long runs load the card fully. Cap the clocks on the machine that has the GPU, for example
-  `sudo nvidia-smi -pm 1 && sudo nvidia-smi -lgc 210,2300` (undo: `sudo nvidia-smi -rgc`). Inside a Docker
+  `sudo nvidia-smi -pm 1 && sudo nvidia-smi -lgc 210,2200` (undo: `sudo nvidia-smi -rgc`). Inside a Docker
   container this needs `cap_add: [SYS_ADMIN]`. Measured on an RTX 4060 Ti: uncapped 2760 MHz, 132 W, 75 °C after
   30 s and still rising; capped at 2300 MHz about 70 W, 64 °C after 30 s. Without that permission,
   `gpu-cooler.sh [pause_c] [resume_c]` pauses every CUDA process of the user above a temperature and resumes it

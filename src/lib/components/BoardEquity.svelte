@@ -9,17 +9,9 @@
 
 <script lang="ts">
 	import { boardRequest, loadBoard, loadSpotList } from '$lib/actions/ranges';
+	import { boardInputs as inputs } from '$lib/stores/boardEquity.svelte';
 	import { rangeStore } from '$lib/stores/ranges.svelte';
 	import type { BoardEquity, BoardQuery } from '$lib/types/ranges';
-	import {
-		clearHole,
-		hasHole,
-		holeCards,
-		inPlay,
-		randomFlop,
-		setBoard,
-		slots
-	} from '$lib/stores/cards.store';
 	import { type Card, makeCard } from '$lib/utils/cards';
 	import { holeToHand } from '$lib/utils/hands';
 	import CardSelect from './CardSelect.svelte';
@@ -29,12 +21,8 @@
 
 	type Pot = BoardQuery['pot'];
 
-	let pot = $state<Pot>('srp');
-	let openerPick = $state('BTN');
-	let otherPick = $state('BB');
-	let side = $state<'opener' | 'other'>('other');
-	// Flop, turn, river. The turn and river are optional; a later card only counts if the ones before it are set.
-	let bet = $state<number | null>(null);
+	// Every input (pot, opener, the other seat, your side, the bet, the board, your hand) is its own
+	// state in the store: picking one leaves the others alone. They meet only in `query` below.
 
 	const POTS: { id: Pot; label: string }[] = [
 		{ id: 'srp', label: 'Single-raised pot' },
@@ -59,9 +47,13 @@
 	// Who can face whom comes from the server (the charts that exist).
 	const spotList = $derived(rangeStore.spotList);
 	const openers = $derived(spotList ? Object.keys(spotList.vs_3bet) : []);
-	const opener = $derived(openers.includes(openerPick) ? openerPick : (openers[0] ?? ''));
+	// The seat in use is the picked one when a chart exists for it; the pick itself is not changed, so
+	// it comes back when it is possible again.
+	const opener = $derived(openers.includes(inputs.opener) ? inputs.opener : (openers[0] ?? ''));
 	const others = $derived(spotList?.vs_3bet[opener] ?? []);
-	const other = $derived(others.includes(otherPick) ? otherPick : (others[0] ?? ''));
+	const other = $derived(others.includes(inputs.other) ? inputs.other : (others[0] ?? ''));
+	const pot = $derived(inputs.pot);
+	const side = $derived(inputs.side);
 	const otherRole = $derived(pot === 'srp' ? 'caller' : '3-bettor');
 
 	const story = $derived(
@@ -72,16 +64,18 @@
 				: `${opener} opened, ${other} 3-bet, ${opener} 4-bet, ${other} called.`
 	);
 
+	// The one place the inputs are put together.
 	const query = $derived.by((): BoardQuery | null => {
-		if (!opener || !other || $inPlay.length < 3) return null;
+		const board = inputs.inPlay;
+		if (!opener || !other || board.length < 3) return null;
 		return {
 			pot,
 			opener,
 			other,
 			side,
-			board: $inPlay,
-			hole: $holeCards,
-			bet,
+			board,
+			hole: inputs.holeCards,
+			bet: inputs.bet,
 			view: 'mine'
 		};
 	});
@@ -137,7 +131,7 @@
 						class:selected={pot === option.id}
 						role="tab"
 						aria-selected={pot === option.id}
-						onclick={() => (pot = option.id)}
+						onclick={() => (inputs.pot = option.id)}
 					>
 						{option.label}
 					</button>
@@ -153,7 +147,7 @@
 								class:selected={opener === option}
 								role="tab"
 								aria-selected={opener === option}
-								onclick={() => (openerPick = option)}
+								onclick={() => (inputs.opener = option)}
 							>
 								{option}
 							</button>
@@ -167,7 +161,7 @@
 								class:selected={other === option}
 								role="tab"
 								aria-selected={other === option}
-								onclick={() => (otherPick = option)}
+								onclick={() => (inputs.other = option)}
 							>
 								{option}
 							</button>
@@ -183,7 +177,7 @@
 							class:selected={side === option.id}
 							role="tab"
 							aria-selected={side === option.id}
-							onclick={() => (side = option.id as 'opener' | 'other')}
+							onclick={() => (inputs.side = option.id as 'opener' | 'other')}
 						>
 							{option.name}
 						</button>
@@ -203,17 +197,19 @@
 				</span>
 				<div class="flex flex-wrap gap-1">
 					{#each PRESETS as preset (preset.label)}
-						<button class="chip small" onclick={() => setBoard(preset.cards)}>{preset.label}</button
+						<button class="chip small" onclick={() => inputs.setFlop(preset.cards)}
+							>{preset.label}</button
 						>
 					{/each}
-					<button class="chip small" onclick={randomFlop}>Random</button>
-					{#if $hasHole}
-						<button class="chip small" onclick={clearHole}>Clear hand</button>
+					<button class="chip small" onclick={() => inputs.randomFlop()}>Random</button>
+					{#if inputs.hasHand}
+						<button class="chip small" onclick={() => inputs.clearHand()}>Clear hand</button>
 					{/if}
 				</div>
 			</div>
 			<CardSelect
-				bind:cards={$slots}
+				cards={inputs.slots}
+				onpick={(index, card) => inputs.setSlot(index, card)}
 				name="Cards"
 				labels={['Flop 1', 'Flop 2', 'Flop 3', 'Turn', 'River', 'Hand 1', 'Hand 2']}
 				groups={[
@@ -229,7 +225,7 @@
 			If the other player bets
 			<select
 				class="rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-100"
-				bind:value={bet}
+				bind:value={inputs.bet}
 			>
 				{#each BETS as option (option.label)}
 					<option value={option.value}>{option.label}</option>

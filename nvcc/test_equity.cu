@@ -1,9 +1,9 @@
-// Checks for the equity tool: the GPU evaluator against a slow, independent host reference, and the hand
-// class tables. Prints PASS and exits 0, or exits 1 on any mismatch.
+// Checks for the equity tool: the GPU evaluator against a slow, independent host reference, the hand class
+// tables, and the equity computation itself (exact, sampled). Prints PASS and exits 0, or exits 1 on any mismatch.
 //
 //   nvcc -O3 -arch=sm_89 -o test_equity test_equity.cu && ./test_equity [deals]
 
-#include "poker.cuh"
+#include "equity.cuh"
 
 __global__ void test_kernel(const uint8_t* deals, int n, int8_t* out) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -144,6 +144,39 @@ int main(int argc, char** argv) {
 	ok = ok && total == 1326;
 	printf("class tables: %s (%d combos)\n", ok ? "ok" : "BAD", total);
 	failures += !ok;
+
+
+	// 3. exact enumeration: reference values (from this tool's first full run, close to the usual 81.9% and
+	//    46.0%), a class against itself is exactly 50%, and swapping the two classes gives 1 - equity.
+	{
+		auto exact1 = [&](const char* a, const char* b) {
+			std::vector<double> eq;
+			std::vector<unsigned long long> nj;
+			exact_pairs({make_int2(class_index(a), class_index(b))}, eq, nj, false);
+			return eq[0];
+		};
+		double aakk = exact1("AA", "KK"), kkaa = exact1("KK", "AA"), akq = exact1("AKs", "QQ");
+		double aa_aa = exact1("AA", "AA"), aks_aks = exact1("AKs", "AKs");
+		bool ex = fabs(aakk - 0.819461) < 1e-6 && fabs(akq - 0.460485) < 1e-6 && fabs(aakk + kkaa - 1) < 1e-12 &&
+		          fabs(aa_aa - 0.5) < 1e-12 && fabs(aks_aks - 0.5) < 1e-12;
+		printf("exact: AA v KK %.6f, KK v AA %.6f, AKs v QQ %.6f, AA v AA %.6f, AKs v AKs %.6f  %s\n", aakk, kkaa, akq,
+		       aa_aa, aks_aks, ex ? "ok" : "BAD");
+		failures += !ex;
+
+		// 4. sampling against exact on a spread of matchups: within 5 standard errors at 4,000,000 samples.
+		const char* names[][2] = {{"AA", "72o"}, {"AKs", "QQ"}, {"JTs", "AKo"}, {"22", "43s"}, {"A5s", "KQo"}, {"87s", "AJo"}};
+		double worst = 0;
+		for (auto& pr : names) {
+			std::vector<double> eq;
+			std::vector<unsigned long long> v;
+			run_pairs({make_int2(class_index(pr[0]), class_index(pr[1]))}, 4000000, 99, eq, v);
+			double e = exact1(pr[0], pr[1]);
+			double z = fabs(eq[0] - e) / sqrt(e * (1 - e) / (double)v[0]);
+			if (z > worst) worst = z;
+		}
+		printf("sampled vs exact: worst difference %.2f standard errors (limit 5)  %s\n", worst, worst < 5 ? "ok" : "BAD");
+		failures += worst >= 5;
+	}
 
 	printf(failures ? "FAIL\n" : "PASS\n");
 	return failures ? 1 : 0;

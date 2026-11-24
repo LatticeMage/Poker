@@ -57,6 +57,9 @@ Read it in Python with `numpy.fromfile('out.bin', dtype=numpy.float64).reshape(1
    common.
 2. **Class tables.** 169 classes in `ranges.ts` order, 1326 distinct combos, 6 / 4 / 12 per pair / suited /
    offsuit class.
+3. **Exact enumeration.** Reference values for AA v KK and AKs v QQ, a class against itself is exactly 50%,
+   and swapping the two classes gives 1 minus the equity.
+4. **Sampling vs exact.** Six matchups at 4,000,000 samples stay within 5 standard errors of the exact value.
 
 It prints `PASS` and exits 0, otherwise `FAIL` and exits 1. Run it after any change to `poker.cuh`.
 

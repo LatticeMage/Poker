@@ -23,7 +23,7 @@
 
 #include <array>
 
-#include "poker.cuh"
+#include "dispatch.cuh"
 
 static const uint32_t E3_NTRIPLE = (uint32_t)NCLASS * (NCLASS + 1) * (NCLASS + 2) / 6;  // 818,805
 static const double E3_SE_UNIT = 2e-5;
@@ -216,13 +216,10 @@ static std::vector<E3Est> e3_sample_ordered(const std::vector<int3>& triples, ui
 		CK(cudaMemcpy(d_jobs, jobs.data(), jobs.size() * 4, cudaMemcpyHostToDevice));
 		CK(cudaMemcpy(d_q, quota.data(), jobs.size() * 4, cudaMemcpyHostToDevice));
 		CK(cudaMemset(d_acc, 0, acc.size() * 8));
-		for (size_t first = 0; first < jobs.size(); first += 4096) {
-			const unsigned nj = (unsigned)std::min<size_t>(4096, jobs.size() - first);
+		dispatch(jobs.size(), 4096, [&](uint64_t first, uint64_t nj) {
 			// the kernel reads jobs[blockIdx.y], so hand it the slice starting at `first`
-			e3_sample_kernel<<<dim3(E3_TPT / E3_BLOCK, nj), E3_BLOCK>>>(d_cls, d_jobs + first, d_q + first, 0, seed, d_acc);
-			CK(cudaGetLastError());
-		}
-		CK(cudaDeviceSynchronize());
+			e3_sample_kernel<<<dim3(E3_TPT / E3_BLOCK, (unsigned)nj), E3_BLOCK>>>(d_cls, d_jobs + first, d_q + first, 0, seed, d_acc);
+		});
 		CK(cudaMemcpy(acc.data(), d_acc, acc.size() * 8, cudaMemcpyDeviceToHost));
 		cudaFree(d_cls); cudaFree(d_jobs); cudaFree(d_q); cudaFree(d_acc);
 	}
@@ -323,13 +320,9 @@ static void e3_exact(const std::vector<int3>& triples, std::vector<std::array<do
 		CK(cudaMemcpy(d_cls, cls.data(), T * sizeof(int4), cudaMemcpyHostToDevice));
 		CK(cudaMemcpy(d_jobs, jobs.data(), jobs.size() * sizeof(uint2), cudaMemcpyHostToDevice));
 		CK(cudaMemset(d_s, 0, sum6.size() * 8));
-		const uint64_t BATCH = 8192;
-		for (uint64_t first = 0; first < jobs.size(); first += BATCH) {
-			const uint64_t nj = std::min<uint64_t>(BATCH, jobs.size() - first);
+		dispatch(jobs.size(), 8192, [&](uint64_t first, uint64_t nj) {
 			e3_exact_kernel<<<(unsigned)((nj * E3_CHUNKS + 255) / 256), 256>>>(d_cls, d_jobs, first, nj, d_s);
-			CK(cudaGetLastError());
-			CK(cudaDeviceSynchronize());
-		}
+		});
 		CK(cudaMemcpy(sum6.data(), d_s, sum6.size() * 8, cudaMemcpyDeviceToHost));
 		cudaFree(d_cls); cudaFree(d_jobs); cudaFree(d_s);
 	}
@@ -588,8 +581,9 @@ static void e3_generate(const std::string& dir, double target_se, uint64_t nmax,
 		if (jobs.empty()) break;
 		printf("round %u: %zu triples\n", round, jobs.size());
 		fflush(stdout);
-		for (size_t first = 0; first < jobs.size(); first += CH) {
-			const unsigned nj = (unsigned)std::min(CH, jobs.size() - first);
+		dispatch(jobs.size(), CH, [&](uint64_t first_, uint64_t count) {
+			const size_t first = (size_t)first_;
+			const unsigned nj = (unsigned)count;
 			CK(cudaMemcpy(d_jobs, &jobs[first], nj * 4, cudaMemcpyHostToDevice));
 			CK(cudaMemcpy(d_q, &quota[first], nj * 4, cudaMemcpyHostToDevice));
 			e3_sample_kernel<<<dim3(E3_TPT / E3_BLOCK, nj), E3_BLOCK>>>(d_cls, d_jobs, d_q, round, SEED, d_acc);
@@ -611,7 +605,7 @@ static void e3_generate(const std::string& dir, double target_se, uint64_t nmax,
 				if (!e3_save_ckpt(dir, g)) fprintf(stderr, "warning: cannot write checkpoint\n");
 				last_ckpt = now;
 			}
-		}
+		});
 		CK(cudaMemcpy(g.acc.data(), d_acc, g.acc.size() * 8, cudaMemcpyDeviceToHost));
 		if (!e3_save_ckpt(dir, g)) fprintf(stderr, "warning: cannot write checkpoint\n");
 		last_ckpt = secs();

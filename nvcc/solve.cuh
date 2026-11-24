@@ -22,7 +22,7 @@
 #include <functional>
 #include <set>
 
-#include "poker.cuh"
+#include "dispatch.cuh"
 
 static const int NP = 192;  // hand slots per vector (169 classes padded to 6 warps; thread h = class h)
 static const int MAXA = 8;  // most actions at one decision
@@ -590,9 +590,10 @@ struct Solver {
 			CK(cudaGraphInstantiate(&exec, graph, 0));
 			CK(cudaGraphDestroy(graph));
 		}
-		for (long long i = 0; i < count; i++) CK(cudaGraphLaunch(exec, stream));
-		CK(cudaStreamSynchronize(stream));
-		CK(cudaGetLastError());
+		dispatch((uint64_t)count, 1000, [&](uint64_t, uint64_t n) {
+			for (uint64_t i = 0; i < n; i++) CK(cudaGraphLaunch(exec, stream));
+			CK(cudaStreamSynchronize(stream));
+		});
 		done += count;
 	}
 

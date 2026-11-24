@@ -22,22 +22,22 @@ them; it only reads the results.
 Each tool is a `.cu` program; code shared by tools lives in a `.cuh`; the checks for a tool are in its own
 `test_<tool>.cu`. New offline tools follow the same layout.
 
-| File                                                               | What it is                                                                                                                                                           |
-| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `poker.cuh`                                                        | Shared: card encoding, the 7-card evaluator `eval7`, the RNG, the 169 hand classes                                                                                   |
-| `ranges.cuh`                                                       | Shared (host): JSON reader and the hand-list grammar of `spots.ts` (`charts.json`, `spots.json`)                                                                     |
-| `equity.cuh`                                                       | The equity computation: kernels and host drivers (`run_pairs` sampled, `exact_pairs` exact)                                                                          |
-| `equity.cu`                                                        | Command line for it: `pair`, `matrix`, `exact` (no checks inside)                                                                                                    |
-| `test_equity.cu`                                                   | Checks: GPU evaluator vs a slow host reference, class tables, exact reference values, sampled vs exact                                                               |
-| `data/equity-exact.bin`                                            | The exact 169×169 matrix (float64, row-major, 228,488 bytes), the input of the solvers. Regenerate: `./equity exact data/equity-exact.bin` (5 min on an RTX 4060 Ti) |
-| `solve.cuh`, `solve.cu`, `test_solve.cu`, `test_solve_external.cu` | Heads-up preflop CFR+ solver, its command line and its checks (see "Heads-up preflop solver")                                                                        |
-| `data/out/headsup-<bb>.json`                                       | Solved heads-up trees, 5 to 150bb                                                                                                                                    |
-| `solve_realization.cuh`, `test_solve_realization.cu`, `solve_compare.cu` | The solver reading the realisation table (`--real`), its checks, a comparison of two result sets (see "The solver with the realisation table") |
-| `data/out/headsup-<bb>-real.json`, `-real-cap.json`                | The same trees solved with the realisation table (default rules / out-of-range classes capped)                                   |
-| `equity3.cuh`, `equity3.cu`, `test_equity3.cu`                     | Three-way equity: kernels, table format and lookup, range function; command line; checks                                                                             |
-| `data/equity3.bin`, `data/equity3-se.bin`                          | The generated three-way table (6.5 MB) and its standard errors (0.8 MB)                                                                                              |
-| `realization.cuh`, `realization.cu`, `test_realization.cu`         | Realisation factors: kernels and betting tree; command line (`run`, `show`, `compare`, `sens`); checks                                                               |
-| `data/realization.json`                                            | The realisation-factor table (182 KB)                                                                                                                                |
+| File                                                                     | What it is                                                                                                                                                           |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `poker.cuh`                                                              | Shared: card encoding, the 7-card evaluator `eval7`, the RNG, the 169 hand classes                                                                                   |
+| `ranges.cuh`                                                             | Shared (host): JSON reader and the hand-list grammar of `spots.ts` (`charts.json`, `spots.json`)                                                                     |
+| `equity.cuh`                                                             | The equity computation: kernels and host drivers (`run_pairs` sampled, `exact_pairs` exact)                                                                          |
+| `equity.cu`                                                              | Command line for it: `pair`, `matrix`, `exact` (no checks inside)                                                                                                    |
+| `test_equity.cu`                                                         | Checks: GPU evaluator vs a slow host reference, class tables, exact reference values, sampled vs exact                                                               |
+| `data/equity-exact.bin`                                                  | The exact 169×169 matrix (float64, row-major, 228,488 bytes), the input of the solvers. Regenerate: `./equity exact data/equity-exact.bin` (5 min on an RTX 4060 Ti) |
+| `solve.cuh`, `solve.cu`, `test_solve.cu`, `test_solve_external.cu`       | Heads-up preflop CFR+ solver, its command line and its checks (see "Heads-up preflop solver")                                                                        |
+| `data/out/headsup-<bb>.json`                                             | Solved heads-up trees, 5 to 150bb                                                                                                                                    |
+| `solve_realization.cuh`, `test_solve_realization.cu`, `solve_compare.cu` | The solver reading the realisation table (`--real`), its checks, a comparison of two result sets (see "The solver with the realisation table")                       |
+| `data/out/headsup-<bb>-real.json`, `-real-cap.json`                      | The same trees solved with the realisation table (default rules / out-of-range classes capped)                                                                       |
+| `equity3.cuh`, `equity3.cu`, `test_equity3.cu`                           | Three-way equity: kernels, table format and lookup, range function; command line; checks                                                                             |
+| `data/equity3.bin`, `data/equity3-se.bin`                                | The generated three-way table (6.5 MB) and its standard errors (0.8 MB)                                                                                              |
+| `realization.cuh`, `realization.cu`, `test_realization.cu`               | Realisation factors: kernels and betting tree; command line (`run`, `show`, `compare`, `sens`); checks                                                               |
+| `data/realization.json`                                                  | The realisation-factor table (182 KB)                                                                                                                                |
 
 ## Build
 
@@ -255,17 +255,17 @@ ignores unknown fields is unaffected. SB value, old formula -> table (bb): 20: -
 Frequencies in % (combo weighted), old formula -> table, default rules (`solve_compare`). The "defends" rows only where SB
 actually opens 2.5 (otherwise the node is not reached). 5 and 10 bb: no change in SB's play, BB-vs-limp at 5 bb 59.9 -> 58.7.
 
-| Depth  | SB fold     | SB limp     | SB raise 2.5 | SB shove    | BB defends 2.5 open | BB 3-bets 2.5 open | BB calls shove | BB raises a limp |
-| ------ | ----------- | ----------- | ------------ | ----------- | ------------------- | ------------------ | -------------- | ---------------- |
+| Depth  | SB fold      | SB limp      | SB raise 2.5 | SB shove     | BB defends 2.5 open | BB 3-bets 2.5 open | BB calls shove | BB raises a limp |
+| ------ | ------------ | ------------ | ------------ | ------------ | ------------------- | ------------------ | -------------- | ---------------- |
 | 15 bb  | 13.6 -> 13.6 | 61.4 -> 63.2 | 4.6 -> 0.0   | 20.4 -> 23.2 | -                   | -                  | 27.2 -> 26.7   | 40.5 -> 40.0     |
-| 20 bb  | 7.8 -> 5.7  | 71.5 -> 76.1 | 17.1 -> 11.6 | 3.6 -> 6.6  | 69.0 -> 72.8        | 24.2 -> 24.0       | 21.3 -> 20.6   | 36.1 -> 34.9     |
-| 30 bb  | 7.2 -> 5.7  | 63.7 -> 65.6 | 29.1 -> 28.7 | 0 -> 0      | 72.8 -> 77.6        | 20.5 -> 20.6       | 15.8 -> 15.0   | 35.9 -> 35.2     |
-| 40 bb  | 9.3 -> 8.1  | 52.5 -> 55.2 | 38.2 -> 36.7 | 0 -> 0      | 76.9 -> 79.1        | 18.7 -> 19.1       | 13.7 -> 13.1   | 38.9 -> 38.0     |
-| 50 bb  | 12.7 -> 12.4 | 41.1 -> 43.0 | 46.3 -> 44.6 | 0 -> 0      | 81.1 -> 83.7        | 17.3 -> 17.8       | 10.1 -> 8.9    | 42.2 -> 41.2     |
-| 60 bb  | 16.0 -> 13.4 | 32.8 -> 38.6 | 51.3 -> 48.0 | 0 -> 0      | 82.8 -> 83.7        | 16.9 -> 17.2       | 8.1 -> 8.0     | 44.4 -> 43.2     |
-| 80 bb  | 16.0 -> 13.3 | 33.1 -> 36.9 | 50.9 -> 49.8 | 0 -> 0      | 84.0 -> 83.7        | 17.8 -> 18.0       | 6.4 -> 6.3     | 44.8 -> 43.1     |
-| 100 bb | 13.0 -> 13.0 | 37.2 -> 37.7 | 49.9 -> 49.4 | 0 -> 0      | 82.3 -> 83.7        | 18.9 -> 18.9       | 5.2 -> 5.3     | 43.2 -> 42.5     |
-| 150 bb | 12.2 -> 11.5 | 42.3 -> 43.0 | 45.5 -> 45.5 | 0 -> 0      | 81.0 -> 83.7        | 19.6 -> 18.9       | 3.6 -> 3.7     | 41.6 -> 40.1     |
+| 20 bb  | 7.8 -> 5.7   | 71.5 -> 76.1 | 17.1 -> 11.6 | 3.6 -> 6.6   | 69.0 -> 72.8        | 24.2 -> 24.0       | 21.3 -> 20.6   | 36.1 -> 34.9     |
+| 30 bb  | 7.2 -> 5.7   | 63.7 -> 65.6 | 29.1 -> 28.7 | 0 -> 0       | 72.8 -> 77.6        | 20.5 -> 20.6       | 15.8 -> 15.0   | 35.9 -> 35.2     |
+| 40 bb  | 9.3 -> 8.1   | 52.5 -> 55.2 | 38.2 -> 36.7 | 0 -> 0       | 76.9 -> 79.1        | 18.7 -> 19.1       | 13.7 -> 13.1   | 38.9 -> 38.0     |
+| 50 bb  | 12.7 -> 12.4 | 41.1 -> 43.0 | 46.3 -> 44.6 | 0 -> 0       | 81.1 -> 83.7        | 17.3 -> 17.8       | 10.1 -> 8.9    | 42.2 -> 41.2     |
+| 60 bb  | 16.0 -> 13.4 | 32.8 -> 38.6 | 51.3 -> 48.0 | 0 -> 0       | 82.8 -> 83.7        | 16.9 -> 17.2       | 8.1 -> 8.0     | 44.4 -> 43.2     |
+| 80 bb  | 16.0 -> 13.3 | 33.1 -> 36.9 | 50.9 -> 49.8 | 0 -> 0       | 84.0 -> 83.7        | 17.8 -> 18.0       | 6.4 -> 6.3     | 44.8 -> 43.1     |
+| 100 bb | 13.0 -> 13.0 | 37.2 -> 37.7 | 49.9 -> 49.4 | 0 -> 0       | 82.3 -> 83.7        | 18.9 -> 18.9       | 5.2 -> 5.3     | 43.2 -> 42.5     |
+| 150 bb | 12.2 -> 11.5 | 42.3 -> 43.0 | 45.5 -> 45.5 | 0 -> 0       | 81.0 -> 83.7        | 19.6 -> 18.9       | 3.6 -> 3.7     | 41.6 -> 40.1     |
 
 (The full per-depth table, every row, is the output of `solve_compare`.) The changes are small, at most a few points
 and 6 at the worst (SB limps at 60 bb), and the same size as the solver's own slack between neighbouring depths.

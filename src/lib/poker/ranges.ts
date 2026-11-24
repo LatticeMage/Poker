@@ -11,8 +11,8 @@
 //     Chen formula if that table is missing. A range is then "the top X% of this order".
 //   · Seats with only a percentage in the sources (9-max UTG+1, UTG+2) take the top X% of it.
 //   · Persona / style adjustments grow or shrink any range along the same order.
-//   · Heads-up has no source; it falls back to the widest chart found (62%). Real heads-up opens
-//     are wider.
+//   · Heads-up first-in (SB/BTN) has no source chart; it reads the solved heads-up tree
+//     (data/headsup-<bb>.json, see headsup.ts) at the depth nearest 100bb, mixed frequencies included.
 //   · Heads-up push/fold ranges for 2–20bb stacks come from an offline fictitious-play
 //     approximation of the equilibrium (tools/make_tables.py), stored in data/tables.json.
 //
@@ -21,6 +21,7 @@
 import chartData from './data/charts.json';
 import tables from './data/tables.json';
 import type { Card } from './cards';
+import { firstIn } from './headsup';
 
 export const RANK_CHARS = '23456789TJQKA'; // index + 2 is the rank value
 export const TOTAL_COMBOS = 1326;
@@ -276,10 +277,46 @@ export interface OpenRange {
 	hands: ReadonlySet<string>;
 	pct: number;
 	/** table = a chart copied from a source; computed = built from the strength order;
-	 *  fallback = nothing found for this seat, widest sourced chart used; none = never opens. */
-	source: 'table' | 'computed' | 'fallback' | 'none';
+	 *  solver = read from the solved heads-up tree (an approximation); fallback = nothing found for
+	 *  this seat, widest sourced chart used; none = never opens. */
+	source: 'table' | 'computed' | 'solver' | 'fallback' | 'none';
 	label: string;
 	url: string;
+	/** Solver ranges only: per hand, the share that raises (all-in included); `pct` is their weighted total. */
+	mix?: Record<string, number>;
+	/** Solver ranges only: per hand, the share that limps (completes) instead. */
+	limp?: Record<string, number>;
+}
+
+const round2 = (x: number) => Math.round(x * 100) / 100;
+
+/** Heads-up first-in from the solved tree: raise / limp / fold shares per hand. */
+function solvedFirstIn(): OpenRange {
+	const solved = firstIn();
+	const mix: Record<string, number> = {};
+	const limp: Record<string, number> = {};
+	let raised = 0;
+	let limped = 0;
+	for (const [hand, [r, l]] of Object.entries(solved.shares)) {
+		raised += r * combos(hand);
+		limped += l * combos(hand);
+		if (round2(r) >= 0.02) mix[hand] = round2(r);
+		if (round2(l) >= 0.02) limp[hand] = round2(l);
+	}
+	const pct = (100 * raised) / TOTAL_COMBOS;
+	const limpPct = (100 * limped) / TOTAL_COMBOS;
+	const fold = Math.max(0, 100 - pct - limpPct);
+	return {
+		hands: new Set(Object.keys(mix)),
+		pct,
+		source: 'solver',
+		label:
+			`Solver approximation at ${solved.stack_bb}bb: raise ${pct.toFixed(0)}%, ` +
+			`limp ${limpPct.toFixed(0)}%, fold ${fold.toFixed(0)}% (preflop CFR+ with modelled postflop equity)`,
+		url: '',
+		mix,
+		limp
+	};
 }
 
 /** Raise-first-in range for the seat at `index` in preflop acting order (0 = first to act). */
@@ -305,13 +342,7 @@ export function seatRange(players: number, index: number): OpenRange {
 		url: CHARTS[key].url
 	});
 	if (behind === 1) {
-		if (players === 2) {
-			return fromChart(
-				'PSBTN',
-				'fallback',
-				'Heads-up: no source found; widest chart used - real heads-up opens are wider'
-			);
-		}
+		if (players === 2) return solvedFirstIn();
 		return fromChart('SB6', 'table', CHARTS.SB6.label);
 	}
 	const key = CHART_BY_BEHIND[behind];

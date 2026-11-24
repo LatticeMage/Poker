@@ -143,7 +143,7 @@ describe('ranges', () => {
 		}
 		const utg = [3, 4, 5, 6, 7, 8, 9].map((n) => seatRange(n, 0).pct);
 		expect(utg).toEqual([...utg].sort((a, b) => b - a));
-		expect(seatRange(2, 0).source).toBe('fallback');
+		expect(seatRange(2, 0).source).toBe('solver');
 	});
 });
 

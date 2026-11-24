@@ -4412,44 +4412,20 @@
 			{
 				"name": "SB/BTN",
 				"behind": 1,
-				"pct": 62.29260935143288,
-				"source": "fallback",
+				"pct": 49.8552036199095,
+				"source": "solver",
 				"hands": [
 					"22",
 					"33",
-					"43s",
 					"44",
-					"53s",
-					"54s",
 					"55",
-					"63s",
-					"64s",
-					"65o",
-					"65s",
 					"66",
-					"73s",
-					"74s",
-					"75s",
-					"76o",
-					"76s",
 					"77",
-					"84s",
-					"85s",
-					"86o",
-					"86s",
-					"87o",
 					"87s",
 					"88",
-					"94s",
-					"95s",
-					"96o",
-					"96s",
-					"97o",
 					"97s",
-					"98o",
 					"98s",
 					"99",
-					"A2o",
 					"A2s",
 					"A3o",
 					"A3s",
@@ -4465,18 +4441,15 @@
 					"A8s",
 					"A9o",
 					"A9s",
-					"AA",
 					"AJo",
 					"AJs",
 					"AKo",
-					"AKs",
 					"AQo",
-					"AQs",
 					"ATo",
 					"ATs",
-					"J3s",
-					"J4s",
+					"J5o",
 					"J5s",
+					"J6o",
 					"J6s",
 					"J7o",
 					"J7s",
@@ -4487,8 +4460,9 @@
 					"JJ",
 					"JTo",
 					"JTs",
-					"K2s",
-					"K3s",
+					"K2o",
+					"K3o",
+					"K4o",
 					"K4s",
 					"K5o",
 					"K5s",
@@ -4507,10 +4481,15 @@
 					"KQs",
 					"KTo",
 					"KTs",
+					"Q2o",
 					"Q2s",
+					"Q3o",
 					"Q3s",
+					"Q4o",
 					"Q4s",
+					"Q5o",
 					"Q5s",
+					"Q6o",
 					"Q6s",
 					"Q7o",
 					"Q7s",
@@ -4523,11 +4502,6 @@
 					"QQ",
 					"QTo",
 					"QTs",
-					"T3s",
-					"T4s",
-					"T5s",
-					"T6o",
-					"T6s",
 					"T7o",
 					"T7s",
 					"T8o",
@@ -4537,7 +4511,13 @@
 					"TT"
 				]
 			},
-			{ "name": "BB", "behind": 0, "pct": 0.0, "source": "none", "hands": [] }
+			{
+				"name": "BB",
+				"behind": 0,
+				"pct": 0.0,
+				"source": "none",
+				"hands": []
+			}
 		],
 		"3": [
 			{
@@ -4716,7 +4696,13 @@
 					"TT"
 				]
 			},
-			{ "name": "BB", "behind": 0, "pct": 0.0, "source": "none", "hands": [] }
+			{
+				"name": "BB",
+				"behind": 0,
+				"pct": 0.0,
+				"source": "none",
+				"hands": []
+			}
 		],
 		"4": [
 			{
@@ -4961,7 +4947,13 @@
 					"TT"
 				]
 			},
-			{ "name": "BB", "behind": 0, "pct": 0.0, "source": "none", "hands": [] }
+			{
+				"name": "BB",
+				"behind": 0,
+				"pct": 0.0,
+				"source": "none",
+				"hands": []
+			}
 		],
 		"5": [
 			{
@@ -5258,7 +5250,13 @@
 					"TT"
 				]
 			},
-			{ "name": "BB", "behind": 0, "pct": 0.0, "source": "none", "hands": [] }
+			{
+				"name": "BB",
+				"behind": 0,
+				"pct": 0.0,
+				"source": "none",
+				"hands": []
+			}
 		],
 		"6": [
 			{
@@ -5596,7 +5594,13 @@
 					"TT"
 				]
 			},
-			{ "name": "BB", "behind": 0, "pct": 0.0, "source": "none", "hands": [] }
+			{
+				"name": "BB",
+				"behind": 0,
+				"pct": 0.0,
+				"source": "none",
+				"hands": []
+			}
 		],
 		"7": [
 			{
@@ -5973,7 +5977,13 @@
 					"TT"
 				]
 			},
-			{ "name": "BB", "behind": 0, "pct": 0.0, "source": "none", "hands": [] }
+			{
+				"name": "BB",
+				"behind": 0,
+				"pct": 0.0,
+				"source": "none",
+				"hands": []
+			}
 		],
 		"8": [
 			{
@@ -6386,7 +6396,13 @@
 					"TT"
 				]
 			},
-			{ "name": "BB", "behind": 0, "pct": 0.0, "source": "none", "hands": [] }
+			{
+				"name": "BB",
+				"behind": 0,
+				"pct": 0.0,
+				"source": "none",
+				"hands": []
+			}
 		],
 		"9": [
 			{
@@ -6830,7 +6846,13 @@
 					"TT"
 				]
 			},
-			{ "name": "BB", "behind": 0, "pct": 0.0, "source": "none", "hands": [] }
+			{
+				"name": "BB",
+				"behind": 0,
+				"pct": 0.0,
+				"source": "none",
+				"hands": []
+			}
 		]
 	},
 	"boards": [
@@ -7195,7 +7217,11 @@
 				"bluff_quota": 0.07664847640374904,
 				"bluff_share_of_bets": 0.2844827586206896
 			},
-			"facing": { "bet": 0.5, "required_equity": 0.25, "defend_frequency": 0.6666666666666666 },
+			"facing": {
+				"bet": 0.5,
+				"required_equity": 0.25,
+				"defend_frequency": 0.6666666666666666
+			},
 			"known": {
 				"hand": "Q5s",
 				"equity": 0.6952191235059761,

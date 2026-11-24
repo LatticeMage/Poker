@@ -8,14 +8,17 @@ export interface SeatRange {
 	/** Share of all 1326 two-card combos opened, in percent. */
 	pct: number;
 	/** table: copied from a source · computed: top X% of the strength order ·
-	 *  fallback: nothing found, widest sourced chart used · none: never opens. */
-	source: 'table' | 'computed' | 'fallback' | 'none';
+	 *  solver: read from the solved heads-up tree · fallback: nothing found, widest sourced chart
+	 *  used · none: never opens. */
+	source: 'table' | 'computed' | 'solver' | 'fallback' | 'none';
 	label: string;
 	url: string;
 	/** Hand classes such as "AKs", "T9o", "77", strongest first. */
 	hands: string[];
 	/** Share of each hand's combos that open (0-1); hands near the edge of the range are mixed. */
 	mix: Record<string, number>;
+	/** Solver seats only: share of each hand that limps instead of raising. */
+	limp?: Record<string, number>;
 }
 
 export interface RangeChart {

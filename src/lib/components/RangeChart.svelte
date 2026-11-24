@@ -8,6 +8,7 @@
 
 <script lang="ts">
 	import {
+		headsUpStacks,
 		loadHeadsUp,
 		loadPushFold,
 		loadRangeChart,
@@ -150,7 +151,10 @@
 			mode === 'open' ? seat?.mix : side === 'push' ? pushFold?.push_mix : pushFold?.call_mix;
 		if (!freq) return undefined;
 		return Object.fromEntries(
-			Object.entries(freq).map(([hand, f]) => [hand, [f, 0, 0] as [number, number, number]])
+			Object.entries(freq).map(([hand, f]) => [
+				hand,
+				[f, 0, mode === 'open' ? (seat?.limp?.[hand] ?? 0) : 0] as [number, number, number]
+			])
 		);
 	});
 	const verb = $derived(mode === 'open' ? 'raise' : side === 'push' ? 'shove' : 'call');
@@ -177,7 +181,9 @@
 				? `Chart: ${seat.label}`
 				: seat.source === 'computed'
 					? `Computed: ${seat.label}`
-					: seat.label
+					: seat.source === 'solver'
+						? `Solver: ${seat.label}`
+						: seat.label
 	);
 
 	// Where the picked hand opens at this table size.
@@ -310,6 +316,11 @@
 						<li class="flex items-center gap-1">
 							<span class="swatch" style:background="#d97706"></span>Raise
 						</li>
+						{#if seat?.limp}
+							<li class="flex items-center gap-1">
+								<span class="swatch" style:background="#0284c7"></span>Limp
+							</li>
+						{/if}
 					{/if}
 					<li class="flex items-center gap-1">
 						<span class="swatch" style:background="#1e293b"></span>Fold
@@ -354,7 +365,12 @@
 							{/if}
 						</span>
 					</div>
-					{#if seat.source === 'computed' || seat.source === 'fallback'}
+					{#if seat.source === 'solver'}
+						<p class="rounded-md bg-slate-800 px-2 py-1 text-xs text-slate-300">
+							No published chart for heads-up: this is a solver approximation (see the Heads-up
+							solved view), so some hands are mixed between raising, limping and folding.
+						</p>
+					{:else if seat.source === 'computed' || seat.source === 'fallback'}
 						<p class="rounded-md bg-slate-800 px-2 py-1 text-xs text-slate-300">
 							{seat.source === 'computed'
 								? 'No published chart for this seat: the hands are the strongest ones by the strength order built from the other charts.'
@@ -372,7 +388,7 @@
 		<div class="flex flex-wrap items-center gap-x-4 gap-y-1">
 			<div class="flex items-center gap-1" role="tablist" aria-label="Stack depth">
 				<span class="text-xs font-semibold text-slate-400">Stack</span>
-				{#each [10, 20, 40, 80] as depth (depth)}
+				{#each headsUpStacks as depth (depth)}
 					<button
 						class="seat-tab"
 						class:selected={duelStack === depth}

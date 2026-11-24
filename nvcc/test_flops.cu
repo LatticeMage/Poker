@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <set>
+#include <string>
 
 static int failures = 0;
 static void check(bool ok, const char* what) {
@@ -45,6 +46,59 @@ int main() {
 	}
 	check(trips_w == 13 * 4, "trips: 13 ranks x 4 = 52 flops");
 	check(paired_w == 13 * 6 * 48, "paired (not trips): 13 x C(4,2) x 48 = 3,744 flops");
+
+	// names: ranks high to low, then the suits as s h d c
+	{
+		bool names_ok = true;
+		std::set<std::string> names;
+		for (const Flop& x : f) names_ok = names_ok && names.insert(flop_name(x)).second && flop_name(x).size() == 6;
+		check(names_ok, "the 1,755 flops have 1,755 different six-character names (e.g. AsKsQd)");
+		int broadway_hist[4] = {0, 0, 0, 0};
+		long long bw_weight[4] = {0, 0, 0, 0};
+		for (const Flop& x : f) { broadway_hist[flop_broadway(x)]++; bw_weight[flop_broadway(x)] += x.weight; }
+		// by hand: no broadway card = three of the 32 cards 2..9 = C(32,3) = 4,960; three broadway = three of the 20 cards T..A = C(20,3) = 1,140
+		check(bw_weight[0] == 4960 && bw_weight[3] == 1140 && bw_weight[0] + bw_weight[1] + bw_weight[2] + bw_weight[3] == 22100,
+		      "flops by number of broadway cards: 0 -> 4,960 and 3 -> 1,140 (counted by hand), all four add up to 22,100");
+	}
+
+	// the taxonomy: every level partitions all 1,755 classes, each level refines the one before, 184 groups at the end
+	{
+		bool nested = true, partitions = true;
+		size_t prev_groups = 0;
+		for (int depth = 1; depth <= 6; depth++) {
+			std::set<std::string> names;
+			long long wsum = 0;
+			for (const Flop& x : f) {
+				names.insert(flop_group_name(x, depth));
+				wsum += x.weight;
+				if (depth > 1) {  // the name one level up is the prefix of this level's name
+					const std::string up = flop_group_name(x, depth - 1), me = flop_group_name(x, depth);
+					nested = nested && me.compare(0, up.size(), up) == 0;
+				}
+			}
+			partitions = partitions && wsum == 22100;
+			nested = nested && names.size() >= prev_groups;
+			prev_groups = names.size();
+		}
+		check(partitions, "every level of the taxonomy covers all 1,755 classes (22,100 flops)");
+		check(nested, "every level refines the one before (the group name is extended, the number of groups never falls)");
+		FlopTaxonomy t184 = flop_taxonomy(184);
+		long long tw = 0;
+		bool in_range = t184.group_of.size() == 1755;
+		std::vector<int> members(t184.name.size(), 0);
+		for (size_t i = 0; in_range && i < 1755; i++) {
+			in_range = t184.group_of[i] >= 0 && t184.group_of[i] < (int)t184.name.size();
+			if (in_range) members[t184.group_of[i]]++;
+		}
+		bool nonempty = true, weights_ok = true;
+		std::vector<long long> gw(t184.name.size(), 0);
+		for (size_t i = 0; in_range && i < 1755; i++) gw[t184.group_of[i]] += f[i].weight;
+		for (size_t g = 0; g < t184.name.size(); g++) { nonempty = nonempty && members[g] > 0; weights_ok = weights_ok && gw[g] == t184.rep[g].weight; tw += gw[g]; }
+		check(t184.name.size() == 184 && in_range && nonempty, "the refinement ends with exactly 184 non-empty named groups");
+		check(weights_ok && tw == 22100, "the 184 groups' weights are the sums of their members' and add up to 22,100");
+		std::set<std::string> distinct(t184.name.begin(), t184.name.end());
+		check(distinct.size() == 184, "the 184 group names are different");
+	}
 
 	// the representatives really are distinct classes
 	std::set<std::tuple<int, int, int>> seen;

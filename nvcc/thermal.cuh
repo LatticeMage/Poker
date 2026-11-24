@@ -9,7 +9,7 @@
 //
 // Settings (environment variables, defaults in brackets):
 //   GPU_PAUSE_C  [63]   while running, wait when the GPU is at or above this temperature; 0 turns the gate off
-//   GPU_RESUME_C [45]   start a task only at or below this, and after a wait keep waiting until at or below this
+//   GPU_RESUME_C [53]   start a task only at or below this, and after a wait keep waiting until at or below this
 //   GPU_POLL_S   [2]    seconds between readings while waiting
 //
 // Waiting inside a process is a poor way to cool: the process keeps its GPU context and the card stays at a higher
@@ -63,9 +63,10 @@ static inline int thermal_env(const char* name, int fallback) {
 // starting = true is the rule for the first batch of a task: wait until the GPU is at or below resume_c.
 static inline double thermal_gate(int pause_c = -1, int resume_c = -1, double poll_s = -1, bool starting = false) {
 	if (pause_c < 0) pause_c = thermal_env("GPU_PAUSE_C", 63);
-	if (resume_c < 0) resume_c = thermal_env("GPU_RESUME_C", 45);
+	if (resume_c < 0) resume_c = thermal_env("GPU_RESUME_C", 53);
 	if (poll_s < 0) poll_s = thermal_env("GPU_POLL_S", 2);
 	if (pause_c == 0) return 0;
+	if (starting && getenv("GPU_START_OK")) starting = false;  // gpu-run.sh has already judged the card cool enough to start
 	ThermalHooks& h = thermal_hooks();
 	static bool warned = false;
 	static std::chrono::steady_clock::time_point last_ok;

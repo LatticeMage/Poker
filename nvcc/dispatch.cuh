@@ -1,6 +1,6 @@
 // The one way GPU work is launched: split the work into batches and hand the batches to dispatch().
-// Before the first batch it waits until the GPU is cool enough to start (<= 45 C), and before every later batch
-// it waits while the card is too hot (>= 63 C, back to <= 45 C); thermal.cuh has the rules. It then runs the
+// Before the first batch it waits until the GPU is cool enough to start (<= 53 C), and before every later batch
+// it waits while the card is too hot (>= 63 C, back to <= 53 C); thermal.cuh has the rules. It then runs the
 // batch, waits for it to finish, and reports progress. Tools do not call thermal_gate() themselves.
 //
 //   dispatch(total_items, items_per_batch, [&](uint64_t first, uint64_t count) {

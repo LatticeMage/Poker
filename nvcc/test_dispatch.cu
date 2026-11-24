@@ -53,11 +53,11 @@ int main() {
 	g_temp = 70;
 	int temp_at_launch = 0;
 	n = dispatch(1, 1, [&](uint64_t, uint64_t) { temp_at_launch = g_temp; });
-	check(n == 1 && temp_at_launch <= 45, "hot card (70 C): the batch starts only once it is at or below 45 C");
+	check(n == 1 && temp_at_launch <= 53, "hot card (70 C): the batch starts only once it is at or below 53 C");
 
 	// 4b. a task starts only when cool, but once running it goes on until 63 C
 	g_reads = 0;
-	g_temp = 62;  // between 45 and 63: not cool enough to start
+	g_temp = 62;  // between 53 and 63: not cool enough to start
 	int temps_seen[3] = {0, 0, 0};
 	int calls = 0;
 	auto reheat = [&](uint64_t, uint64_t) {
@@ -65,7 +65,7 @@ int main() {
 		g_temp = 62;  // the card heats back up to 62 C during every batch
 	};
 	n = dispatch(3, 1, reheat);
-	check(n == 3 && temps_seen[0] <= 45, "starting at 62 C: the first batch waits until 45 C");
+	check(n == 3 && temps_seen[0] <= 53, "starting at 62 C: the first batch waits until 53 C");
 	check(temps_seen[1] == 62 && temps_seen[2] == 62, "later batches of the running task go on at 62 C (below the 63 C limit)");
 
 	// 5. the work of a batch sees the order of the batches (nothing is launched out of order)

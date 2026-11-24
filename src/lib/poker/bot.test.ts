@@ -3,7 +3,8 @@ import type { Action } from '$lib/types/game';
 import { chenScore, decide, equity, preflopOrder } from './bot';
 import { parseCards } from './cards';
 import { advance, applyAction, createGame, startHand } from './engine';
-import { handOf, pushfold, seatRange } from './ranges';
+import { pushFoldFreq, share } from './mixed';
+import { handOf, seatRange } from './ranges';
 import { mulberry32 } from './rng';
 import { comboCount, vs3bet, vsOpen } from './spots';
 import { BALANCED, BB, BTN, CO, FOLD, HJ, SB, UTG, newGame, raise, totalChips } from './testing';
@@ -76,28 +77,33 @@ describe('robots follow the charts', () => {
 		}
 	});
 
-	it('heads-up with 10bb the robots play the computed push/fold ranges', () => {
-		const table = pushfold(10)!;
+	it('heads-up with 5bb the robots shove and call at the solved push/fold frequencies', () => {
 		const rng = mulberry32(8);
+		const push = pushFoldFreq(5, 'push');
+		const call = pushFoldFreq(5, 'call');
 		let shoves = 0;
-		const n = 1500;
+		const n = 3000;
 		for (let i = 0; i < n; i++) {
-			const g = createGame({ players: 2, chips: 200, bots: BALANCED }, rng); // 10bb at the 10/20 blinds
+			const g = createGame({ players: 2, chips: 100, bots: BALANCED }, rng); // 5bb at the 10/20 blinds
 			startHand(g, rng);
 			const sb = g.to_act;
 			expect(sb).toBe(g.sb_seat);
 			const action = decide(g, sb, rng);
-			const inRange = table.push.has(handOf(g.players[sb].hole));
-			expect(action.type === 'raise').toBe(inRange);
+			const name = handOf(g.players[sb].hole);
 			if (action.type === 'raise') {
 				shoves++;
+				expect(push[name] ?? 0).toBeGreaterThan(0);
 				expect(action.amount).toBe(g.players[sb].bet + g.players[sb].chips); // all-in
 				applyAction(g, action);
 				const reply = decide(g, g.to_act, rng);
-				expect(reply.type === 'call').toBe(table.call.has(handOf(g.players[g.to_act].hole)));
+				if (reply.type === 'call')
+					expect(call[name === 'x' ? 'AA' : handOf(g.players[g.to_act].hole)]).toBeGreaterThan(0);
+			} else {
+				expect(push[name] ?? 0).toBeLessThan(1);
 			}
 		}
-		expect(Math.abs((100 * shoves) / n - table.push_pct)).toBeLessThan(3);
+		const want = share(push);
+		expect(Math.abs(shoves / n - want)).toBeLessThan(0.03);
 	});
 });
 

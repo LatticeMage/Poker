@@ -7,7 +7,9 @@
 // One .cu file per program includes this header (the __constant__ tables are per translation unit).
 #pragma once
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>

@@ -8,9 +8,14 @@
 // below GPU_RESUME_C.
 //
 // Settings (environment variables, defaults in brackets):
-//   GPU_PAUSE_C  [60]   while running, wait when the GPU is at or above this temperature; 0 turns the gate off
-//   GPU_RESUME_C [52]   start a task only at or below this, and after a wait keep waiting until at or below this
+//   GPU_PAUSE_C  [63]   while running, wait when the GPU is at or above this temperature; 0 turns the gate off
+//   GPU_RESUME_C [45]   start a task only at or below this, and after a wait keep waiting until at or below this
 //   GPU_POLL_S   [2]    seconds between readings while waiting
+//
+// Waiting inside a process is a poor way to cool: the process keeps its GPU context and the card stays at a higher
+// floor (53 to 56 C instead of 46 C). So when the program was started by gpu-run.sh (it sets GPU_RUN=1) the gate does
+// not wait: it leaves with status 75 (EXIT_EVICTED) and gpu-run.sh waits outside, with the GPU empty, and starts it
+// again. That loses nothing: dispatch() has written its state to the relay file after every finished batch.
 //
 // The GPU is read as nvidia-smi index 0 (one card). If nvidia-smi cannot be run the gate lets the work
 // through and says so once. The reading and the sleep can be replaced (see ThermalHooks), which is how
@@ -41,6 +46,8 @@ static inline void thermal_real_sleep(double s) {
 	std::this_thread::sleep_for(std::chrono::duration<double>(s));
 }
 
+static inline bool hooks_is_real(const ThermalHooks& h) { return h.read_c == thermal_read_nvidia_smi; }  // tests inject fakes
+
 static inline ThermalHooks& thermal_hooks() {
 	static ThermalHooks h = {thermal_read_nvidia_smi, thermal_real_sleep, 2.0};
 	return h;
@@ -55,8 +62,8 @@ static inline int thermal_env(const char* name, int fallback) {
 // pause_c / resume_c / poll_s < 0 means: take it from the environment (or the default).
 // starting = true is the rule for the first batch of a task: wait until the GPU is at or below resume_c.
 static inline double thermal_gate(int pause_c = -1, int resume_c = -1, double poll_s = -1, bool starting = false) {
-	if (pause_c < 0) pause_c = thermal_env("GPU_PAUSE_C", 60);
-	if (resume_c < 0) resume_c = thermal_env("GPU_RESUME_C", 52);
+	if (pause_c < 0) pause_c = thermal_env("GPU_PAUSE_C", 63);
+	if (resume_c < 0) resume_c = thermal_env("GPU_RESUME_C", 45);
 	if (poll_s < 0) poll_s = thermal_env("GPU_POLL_S", 2);
 	if (pause_c == 0) return 0;
 	ThermalHooks& h = thermal_hooks();
@@ -78,8 +85,12 @@ static inline double thermal_gate(int pause_c = -1, int resume_c = -1, double po
 		return 0;
 	}
 	have_last = false;
-	if (starting) fprintf(stderr, "[thermal] %d C > %d C: waiting before starting\n", t, resume_c);
-	else fprintf(stderr, "[thermal] %d C >= %d C: waiting until <= %d C\n", t, pause_c, resume_c);
+	if (starting) fprintf(stderr, "[thermal] %d C > %d C: not cool enough to start\n", t, resume_c);
+	else fprintf(stderr, "[thermal] %d C >= %d C: too hot\n", t, pause_c);
+	if (getenv("GPU_RUN") && hooks_is_real(h)) {
+		fprintf(stderr, "[thermal] leaving (status 75) so that the GPU can empty and cool; gpu-run.sh starts me again\n");
+		exit(75);
+	}
 	double waited = 0, next_note = 60;
 	while (t > resume_c) {
 		h.sleep_s(poll_s);

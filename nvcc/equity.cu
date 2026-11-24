@@ -2,7 +2,8 @@
 //
 //   nvcc -O3 -arch=sm_89 -o equity equity.cu
 //   ./equity pair AKs QQ 8000000          equity of one class pair
-//   ./equity matrix 1000000 out.bin       all 14,196 pairs by sampling; out.bin = 169*169 float64, row-major
+//   ./equity matrix 1000000 out.bin       all 14,196 pairs by sampling; out.bin = 169*169 float64, row-major;
+//                                         saves out.bin.ckpt as it goes (see exact below)
 //   ./equity exact out.bin [A B]          every combo pair on every board: no sampling noise; saves
 //                                         out.bin.ckpt as it goes, so an interrupted run is carried on
 //                                         by running the same command again (delete the file to recompute)
@@ -39,7 +40,7 @@ int main(int argc, char** argv) {
 		std::vector<int2> all = all_pairs();
 		std::vector<double> result;
 		std::vector<unsigned long long> v;
-		run_pairs(all, samples, 20261124, result, v, true);
+		run_pairs(all, samples, 20261124, result, v, true, 256, std::string(argv[3]) + ".ckpt");  // relay file next to the output
 		write_matrix(argv[3], all, result);
 	} else if (mode == "exact" && argc >= 3) {
 		std::vector<int2> pairs = argc >= 5 ? std::vector<int2>{make_int2(class_index(argv[3]), class_index(argv[4]))} : all_pairs();

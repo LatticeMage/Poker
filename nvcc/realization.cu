@@ -34,7 +34,7 @@ static int cmd_run(long long boards, const std::string& out, uint64_t seed) {
 			printf("%s: %lld boards, depths", def.key.c_str(), boards);
 			for (int d : r.depths) printf(" %d", d);
 			printf("\n");
-			r = run_pot(def, boards, seed, true);
+			r = run_pot(def, boards, seed, true, nullptr, out + "." + def.key + ".relay");  // relay: carried on if interrupted
 			save_state(state, r, boards, seed);
 		}
 		printf("%s: %.0fs, identity errors: probability %.1e chips %.1e invested %.1e raw %.1e\n", def.key.c_str(), r.res.secs, r.res.err_prob,

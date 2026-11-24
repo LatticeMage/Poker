@@ -5,6 +5,7 @@
 
 #include "flops.cuh"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <set>
@@ -100,6 +101,31 @@ int main() {
 		check(std::fabs(mean_high_sub - mean_high_full) / 22100 < 0.15, "the weighted mean high card is close to the full set's (within 0.15 of a rank)");
 		check(std::fabs(mean_span_sub - mean_span_full) / 22100 < 0.15, "the weighted mean span is close to the full set's (within 0.15)");
 		check(std::fabs(w_two_sub - w_two_full) / 22100 < 0.02, "the share of two-tone flops is within 2 points of the full set's");
+		// every class belongs to exactly one of the 184 groups; a representative belongs to its own group
+		FlopPartition part = subset_partition(184);
+		std::vector<long long> gw(184, 0);
+		std::vector<int> gn(184, 0);
+		bool mapped = part.group_of.size() == f.size() && part.rep.size() == 184;
+		for (size_t i = 0; mapped && i < f.size(); i++) {
+			const int g = part.group_of[i];
+			mapped = g >= 0 && g < 184;
+			if (mapped) { gw[g] += f[i].weight; gn[g]++; }
+		}
+		bool weights_match = mapped, reps_self = mapped, nonempty = mapped;
+		int total_members = 0;
+		for (int g = 0; mapped && g < 184; g++) {
+			weights_match = weights_match && gw[g] == part.rep[g].weight;
+			reps_self = reps_self && part.group_of[part.rep[g].index] == g;
+			nonempty = nonempty && gn[g] >= 1;
+			total_members += gn[g];
+		}
+		check(mapped && total_members == 1755, "every one of the 1,755 classes belongs to exactly one of the 184 groups");
+		check(nonempty && reps_self, "no group is empty, and each representative is in its own group");
+		check(weights_match, "each representative's weight is the total weight of its group");
+		int biggest = 0, single = 0;
+		for (int g = 0; mapped && g < 184; g++) { biggest = std::max(biggest, gn[g]); single += gn[g] == 1; }
+		printf("  (groups: %d classes in the biggest group, %d groups with one class)\n", biggest, single);
+
 		std::vector<Flop> again = subset_flops(184);
 		bool same = again.size() == sub.size();
 		for (size_t i = 0; same && i < sub.size(); i++) same = again[i].index == sub[i].index && again[i].weight == sub[i].weight;

@@ -9,6 +9,8 @@
 #   The command runs with GPU_RUN=1 and GPU_START_OK=1 (the start check is done here, not again inside): if the GPU is too hot when it wants to start or go on, thermal.cuh makes it leave with
 #   status 75 at once (its state is already in its relay file), so the GPU can empty and cool outside the process.
 #
+#   GPU_LOCK=<file> is the lock all gpu-run.sh share (default under the Poker logs folder): one GPU task at a time.
+#
 # Exit status: that of the command when it finishes (0 = done), or 1 after max_runs evictions.
 MAX=200
 if [ "${1:-}" = "-n" ]; then MAX=$2; shift 2; fi
@@ -41,6 +43,18 @@ wait_cool() {
 		sleep 10
 	done
 }
+
+# One GPU task at a time: every gpu-run.sh takes this lock before it waits for the card or starts, and keeps it until its
+# command is finished (also while it waits for the card to cool between evictions), so concurrent tasks queue up. The lock
+# is released when this script exits, however it exits.
+LOCK=${GPU_LOCK:-/home/ubuntu/app/Github/LatticeMage/Poker/logs/gpu.lock}
+mkdir -p "$(dirname "$LOCK")"
+exec 9>"$LOCK"
+if ! flock -n 9; then
+	echo "$(stamp) [gpu-run] another GPU task is running: queued ($*)"
+	flock 9
+fi
+echo "$(stamp) [gpu-run] got the GPU"
 
 runs=0
 while [ "$runs" -lt "$MAX" ]; do

@@ -11,6 +11,10 @@
 //    blind shoves or folds, the big blind calls or folds. Solved by fictitious play on the equity
 //    matrix, then thresholded to pure ranges; the leftover exploitability is stored with each.
 //
+// Superseded: the committed tables.json no longer comes from this script. The equity matrix is the exact one
+// of nvcc/ (equity exact) and the push/fold part is solved on the GPU (nvcc/pushfold.cu), then copied in by
+// tools/apply-pushfold.ts. This script is kept for the sampled, CPU-only version of the same tables.
+//
 // With the default 4000 samples this takes a few minutes. The output path defaults to a scratch
 // file next to the real tables, so regenerating never overwrites the committed data by accident:
 // compare, then copy it over src/lib/poker/data/tables.json yourself.

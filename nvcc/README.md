@@ -576,3 +576,38 @@ table is only as good as the family of policies it came from. The full output is
   hand with several actions counted with its share.
 - Accuracy: standard errors of the factors are at most 0.002 (sampling of boards only); the model error is
   much larger and is not measured against a solver.
+
+# Heads-up push/fold tables (2-20bb)
+
+`pushfold.cu` solves the push/fold game (small blind folds or shoves, big blind folds or calls; cEV, no ICM)
+with the CFR+ solver of `solve.cuh` on its push/fold tree (`build_pushfold_tree`, also `solve --tree pushfold`),
+on the exact matrix, and writes the data the app reads. Every call is an all-in showdown, so no realisation
+heuristic enters. Build with `-fmad=false` like the solver.
+
+| File                     | What it is                                                                                                 |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `pushfold.cuh`           | Tables from the averaged strategies, an independent exploitability evaluator (`PfEval`), the JSON          |
+| `pushfold.cu`            | Command line                                                                                               |
+| `test_pushfold.cu`       | Checks                                                                                                     |
+| `data/out/pushfold.json` | Result: `equity_vs_random`, `pushfold`, `mix` (schemas of `tables.json` and `pushfold-mix.json`), `solver` |
+
+```bash
+$NVCC -O3 -fmad=false -arch=sm_89 -o pushfold pushfold.cu
+$NVCC -O3 -fmad=false -arch=sm_89 -o test_pushfold test_pushfold.cu
+./pushfold --iters 300000 --out data/out/pushfold.json      # 70 s on an RTX 4060 Ti (19 stacks at once)
+./test_pushfold                                             # 20,000 iterations, 2 s
+npm run apply-pushfold && npx prettier --write src/lib/poker/data   # from the repo root: copy into the app's data
+```
+
+- The pure ranges are the classes whose averaged shove / call frequency is above one half (as before); the
+  frequencies of at least 2% go to `pushfold-mix.json`.
+- `exploitability_bb` is what a best response gains against the **pure** ranges, both seats added, in bb per hand
+  dealt (the big blind's gain counts only the hands where he is shoved at). The averaged strategy itself is
+  below 1e-7 bb at every stack (`solver.stacks.*.exploitability_mixed_bb`); thresholding the edge hands costs up to
+  1.3e-4 bb at 8bb. The old tables, from fictitious play on a 4000-sample matrix, were measured on that same noisy matrix.
+- `tables.json` keeps `samples_per_matchup` above zero (1,712,304 = every board of each combo pair), since the field means
+  samples per matchup and the exact matrix enumerates all of them.
+- **Check:** the evaluator against a two-hand game worked out by hand; the solver's exploitability and value equal the
+  evaluator's on the same strategy (3e-15); zero-sum; exploitability bounds; ranges shrink with depth; strong hands
+  always in; ranges at 2, 5, 10, 20bb in published regions; JSON lists, percentages and frequencies agree;
+  `equity_vs_random` known values and mean exactly 0.5.

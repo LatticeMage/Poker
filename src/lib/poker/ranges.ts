@@ -13,8 +13,9 @@
 //   · Persona / style adjustments grow or shrink any range along the same order.
 //   · Heads-up first-in (SB/BTN) has no source chart; it reads the solved heads-up tree
 //     (data/headsup-<bb>.json, see headsup.ts) at the depth nearest 100bb, mixed frequencies included.
-//   · Heads-up push/fold ranges for 2–20bb stacks come from an offline fictitious-play
-//     approximation of the equilibrium (tools/make_tables.py), stored in data/tables.json.
+//   · Heads-up push/fold ranges for 2–20bb stacks come from an offline CFR+ solution of the
+//     equilibrium on the exact equity matrix (nvcc/pushfold.cu, copied in by tools/apply-pushfold.ts),
+//     stored in data/tables.json.
 //
 // Percentages are shares of the 1326 two-card combos: pairs 6, suited 4, offsuit 12.
 

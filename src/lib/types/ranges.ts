@@ -106,6 +106,11 @@ export interface UnknownHands {
 	view: 'mine' | 'theirs';
 	/** Equity of each hand class of the viewed range against the other range. */
 	grid: Record<string, number>;
+	/**
+	 * What to do with each hand class of your range (view "mine" only): shares of [bet or raise for
+	 * value, bluff, call]; the rest checks (nobody has bet) or folds (facing a bet).
+	 */
+	actions: Record<string, [number, number, number]>;
 }
 
 /** Equity when your own two cards are known (theirs are not). */

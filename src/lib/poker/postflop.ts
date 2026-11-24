@@ -524,6 +524,43 @@ export function classEquities(
 	return out;
 }
 
+/**
+ * What the model does with every hand class of your range on this board: the share of its combos
+ * that [bet / raise for value, bluff, call] (the rest checks or folds). Every live combo of the
+ * class is judged on its own, then averaged, so suits that matter (a flush draw against none) show
+ * as a part of the cell.
+ */
+export function classActions(
+	board: readonly Card[],
+	mine: Weighted,
+	theirs: Weighted,
+	pick: (prof: Profile) => [value: number, bluff: number, call: number]
+): Record<string, [number, number, number]> | null {
+	const stats = rangeStats(board, mine, theirs);
+	if (!stats) return null;
+	const out: Record<string, [number, number, number]> = {};
+	for (const [name, weight] of itemsOf(mine)) {
+		if (weight <= 0) continue;
+		const total: [number, number, number] = [0, 0, 0];
+		let n = 0;
+		for (const combo of classCombos(name)) {
+			if (board.includes(combo[0]) || board.includes(combo[1])) continue;
+			const prof = profile(board, combo, mine, theirs);
+			if (!prof) continue;
+			const shares = pick(prof);
+			for (let i = 0; i < 3; i++) total[i] += shares[i];
+			n++;
+		}
+		if (n) out[name] = [total[0] / n, total[1] / n, total[2] / n];
+	}
+	return out;
+}
+
+/** The chance that `rank + jitter <= limit`, the jitter being uniform on ±JITTER (as in `decide`). */
+export const JITTER = 0.03;
+export const below = (rank: number, limit: number): number =>
+	clamp((limit - rank + JITTER) / (2 * JITTER), 0, 1);
+
 /** One hand class of a range on the equity chart. */
 export interface ClassPoint {
 	hand: string;

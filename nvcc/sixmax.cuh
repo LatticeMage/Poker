@@ -703,19 +703,114 @@ struct Solver6 {
 		k_tick<<<1, 1, 0, s>>>(d_t);
 	}
 
+	void ensure_graph() {
+		if (exec) return;
+		cudaGraph_t graph;
+		CK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+		enqueue_iteration(stream);
+		CK(cudaStreamEndCapture(stream, &graph));
+		CK(cudaGraphInstantiate(&exec, graph, 0));
+		CK(cudaGraphDestroy(graph));
+	}
+
+	// `count` more iterations in one go (tests, short runs; no relay, no thermal gate).
 	void iterate(long long count) {
-		if (!exec) {
-			cudaGraph_t graph;
-			CK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
-			enqueue_iteration(stream);
-			CK(cudaStreamEndCapture(stream, &graph));
-			CK(cudaGraphInstantiate(&exec, graph, 0));
-			CK(cudaGraphDestroy(graph));
-		}
+		ensure_graph();
 		for (long long i = 0; i < count; i++) CK(cudaGraphLaunch(exec, stream));
 		CK(cudaStreamSynchronize(stream));
 		CK(cudaGetLastError());
 		done += count;
+	}
+
+	// A hash of everything the iterations depend on: the tree, the frozen flags, the tables, and the state the run
+	// starts from (regrets, sums, sigma slots), so that a relay file of another start is not used.
+	uint64_t problem_tag() {
+		uint64_t h = relay_hash_u64(14695981039346656037ull, 0x36584d4158ull);
+		auto u = [&](uint64_t v) { h = relay_hash_u64(h, v); };
+		auto vec = [&](const std::vector<double>& v) { u(v.size()); h = relay_hash(h, v.data(), v.size() * sizeof(double)); };
+		u(G); u(S); u(pb.n);
+		for (const DNode& d : hn) {
+			u(d.type); u(d.player); u(d.nact); u(d.aoff); u(d.frozen);
+			for (int a = 0; a < MAXACT; a++) u((uint64_t)(int64_t)d.child[a]);
+			u(d.live); u(d.cat); u(d.ip); u(d.oop);
+			for (int k = 0; k < 3; k++) { u(d.sl[k]); u(d.role[k]); }
+			for (int p = 0; p < NPLAYER; p++) h = relay_hash(h, &d.contrib[p], sizeof(double));
+			h = relay_hash(h, &d.pot, sizeof(double));
+		}
+		vec(pb.prior);
+		vec(pb.Wn);
+		for (int c = 0; c < NCAT; c++) { vec(pb.A_ip[c]); vec(pb.A_oop[c]); }
+		for (int s = 0; s < 3; s++) {
+			u(pb.T[s].size());
+			h = relay_hash(h, pb.T[s].data(), pb.T[s].size() * sizeof(float4));
+			vec(pb.grole[s]);
+		}
+		vec(pb.NS);
+		const size_t cnt = (size_t)S * NPAD;
+		vec(download(d_regret, cnt));
+		vec(download(d_sum, cnt));
+		vec(download(d_sigma, cnt));
+		return h;
+	}
+
+	// The relay: run iterations 0 .. total in batches of `batch` iterations (a second or two each), writing the state
+	// (regrets and strategy sums; the iteration count is the relay's `done`; `save_extra` / `load_extra` add the
+	// caller's own, e.g. the convergence points) to `path` after EVERY batch. Started again with the same problem and
+	// total it restores that state and goes on; the result is identical to an uninterrupted run, bit for bit.
+	// `after(done)` is called after each batch (reports); it may compute gaps but must not touch regrets or sums.
+	// A file in the old format is converted when its iteration count is a multiple of `batch`. path empty = no relay.
+	// `stop_after` is for tests: stop cleanly after that many batches of this call.
+	void run(long long total, const std::string& path, long long batch, const std::function<void(long long)>& after = nullptr,
+	         const std::function<void(FILE*)>& save_extra = nullptr, const std::function<bool(FILE*)>& load_extra = nullptr,
+	         uint64_t stop_after = 0) {
+		ensure_graph();
+		if (batch < 1) batch = 50;
+		const size_t cnt = (size_t)S * NPAD;
+		Relay relay;
+		relay.path = path;
+		relay.tag = path.empty() ? 0 : problem_tag();
+		relay.stop_after = stop_after;
+		relay.save_state = [&](FILE* f) {
+			const std::vector<double> r = download(d_regret, cnt), s = download(d_sum, cnt);
+			fwrite(r.data(), sizeof(double), cnt, f);
+			fwrite(s.data(), sizeof(double), cnt, f);
+			if (save_extra) save_extra(f);
+		};
+		relay.load_state = [&](FILE* f) {
+			std::vector<double> r(cnt), s(cnt);
+			if (fread(r.data(), sizeof(double), cnt, f) != cnt || fread(s.data(), sizeof(double), cnt, f) != cnt) return false;
+			if (load_extra && !load_extra(f)) return false;
+			CK(cudaMemcpy(d_regret, r.data(), cnt * sizeof(double), cudaMemcpyHostToDevice));
+			CK(cudaMemcpy(d_sum, s.data(), cnt * sizeof(double), cudaMemcpyHostToDevice));
+			return true;
+		};
+		if (!path.empty()) {  // an old-format checkpoint (stage 2 of earlier versions)
+			const std::vector<double> r0 = download(d_regret, cnt), s0 = download(d_sum, cnt);
+			const long long done0 = done;
+			if (done == 0 && load_legacy(path.c_str())) {
+				if (done <= total && done % batch == 0) {
+					fprintf(stderr, "[relay] %s: converting an old checkpoint at iteration %lld\n", path.c_str(), done);
+					// the tag was made from the start state, before load_legacy replaced it; the caller's extra state
+					// (convergence points) is whatever it holds now: the old format has none
+					relay_save(relay, (uint64_t)total, (uint64_t)batch, (uint64_t)done);
+				} else {
+					fprintf(stderr, "[relay] %s: old checkpoint at %lld does not fit a batch of %lld, starting from scratch\n", path.c_str(), done, batch);
+				}
+				CK(cudaMemcpy(d_regret, r0.data(), cnt * sizeof(double), cudaMemcpyHostToDevice));  // back to the start; dispatch restores
+				CK(cudaMemcpy(d_sum, s0.data(), cnt * sizeof(double), cudaMemcpyHostToDevice));
+				done = done0;
+				set_t(1);
+			}
+		}
+		dispatch((uint64_t)total, (uint64_t)batch, [&](uint64_t first, uint64_t n) {
+			set_t((double)first + 1);
+			for (uint64_t i = 0; i < n; i++) CK(cudaGraphLaunch(exec, stream));
+			CK(cudaStreamSynchronize(stream));
+			done = (long long)(first + n);
+			if (after) after(done);
+		}, "iter", false, path.empty() ? nullptr : &relay);
+		done = (stop_after && !path.empty()) ? (long long)relay.done : total;
+		set_t((double)done + 1);
 	}
 
 	void average() {
@@ -781,19 +876,8 @@ struct Solver6 {
 		CK(cudaMemcpy(d_sigma, s.data(), s.size() * sizeof(double), cudaMemcpyHostToDevice));
 	}
 
-	// -- checkpoints: regrets, strategy sums and the iteration count
-	bool save(const char* path) {
-		std::vector<double> r = download(d_regret, (size_t)S * NPAD), s = download(d_sum, (size_t)S * NPAD);
-		FILE* f = fopen((std::string(path) + ".tmp").c_str(), "wb");
-		if (!f) return false;
-		long long hdr[4] = {0x36584d41583031ll, G, S, done};
-		fwrite(hdr, sizeof hdr, 1, f);
-		fwrite(r.data(), sizeof(double), r.size(), f);
-		fwrite(s.data(), sizeof(double), s.size(), f);
-		fclose(f);
-		return rename((std::string(path) + ".tmp").c_str(), path) == 0;
-	}
-	bool load(const char* path) {
+	// -- the old checkpoint format (PREFIX.ckpt before the relay): read only, run() converts it
+	bool load_legacy(const char* path) {
 		FILE* f = fopen(path, "rb");
 		if (!f) return false;
 		long long hdr[4];

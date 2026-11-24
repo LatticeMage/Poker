@@ -2,7 +2,7 @@
 //
 //   nvcc -O3 -arch=sm_89 -o sixmax sixmax.cu
 //   ./sixmax tree [stack]                        print the tree size
-//   ./sixmax solve --stack 100 --iters1 3000 --iters 20000 [--out data/out] [--ckpt PREFIX] [--report N] [--seed-k K]
+//   ./sixmax solve --stack 100 --iters1 3000 --iters 20000 [--out data/out] [--ckpt PREFIX] [--batch N] [--report N] [--seed-k K]
 //
 // Stage 1 trains only the first-in decisions, every reply fixed to the source charts; stage 2 trains everything,
 // starting from stage 1. The ranges are read from src/lib/poker/data (POKER_DATA overrides that folder).
@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
 			else if (a == "--iters") o.iters2 = atoll(v);
 			else if (a == "--out") o.out = v;
 			else if (a == "--ckpt") o.ckpt = v;
+			else if (a == "--batch") o.batch = atoll(v);
 			else if (a == "--report") o.report = atoll(v);
 			else if (a == "--seed-k") o.seed_k = atof(v);
 			else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 1; }

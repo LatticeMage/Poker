@@ -13,6 +13,8 @@
 //    1/3 (the players are exchangeable and the shares sum to 1).
 // 7. The range function: GPU = CPU, permuting the ranges permutes the answers, per-player masses agree, and
 //    against a direct combo-level Monte Carlo on realistic ranges (error reported).
+// 8. The relay: sampling, exact enumeration and the generator, stopped and resumed (also from a checkpoint of the old
+//    format), give the same results as an uninterrupted run, bit for bit.
 
 #include "equity3.cuh"
 
@@ -122,6 +124,107 @@ __global__ void mc_kernel(const ComboEntry* combos, const double* cdf, int ncomb
 		atomicAdd(&sum6[i], s_s[i]);
 		atomicAdd(&sq6[i], s_q[i]);
 		atomicAdd(&cnt[i], s_c[i]);
+	}
+}
+
+// -- 8. the relay: stopped and resumed equals uninterrupted, bit for bit ---------------------------------------
+static std::vector<uint8_t> slurp(const std::string& p) {
+	std::vector<uint8_t> v;
+	FILE* f = fopen(p.c_str(), "rb");
+	if (!f) return v;
+	uint8_t buf[1 << 16];
+	size_t n;
+	while ((n = fread(buf, 1, sizeof buf, f)) > 0) v.insert(v.end(), buf, buf + n);
+	fclose(f);
+	return v;
+}
+
+static void test_relay() {
+	printf("8. the relay\n");
+	// sampling: 9,000 triples (two batches of 4096 and a rest), stopped after the first batch
+	{
+		std::vector<int3> tr;
+		uint64_t s = 12345;
+		auto rnd = [&]() { s = s * 6364136223846793005ull + 1442695040888963407ull; return (int)((s >> 33) % NCLASS); };
+		for (int i = 0; i < 9000; i++) tr.push_back(make_int3(rnd(), rnd(), rnd()));
+		const char* p = "/tmp/test_equity3_sample.ckpt";
+		remove(p);
+		const std::vector<E3Est> ref = e3_sample_ordered(tr, 4096, 777);
+		const std::vector<E3Est> a = e3_sample_ordered(tr, 4096, 777, p, 1);
+		report(relay_peek_done(p) == 4096, "sampling: stopped after 1 batch, the file holds 4096 jobs");
+		const std::vector<E3Est> b = e3_sample_ordered(tr, 4096, 777, p);
+		bool same = true;
+		for (size_t i = 0; i < tr.size(); i++)
+			same = same && b[i].n == ref[i].n && memcmp(b[i].eq, ref[i].eq, sizeof b[i].eq) == 0 && memcmp(b[i].se, ref[i].se, sizeof b[i].se) == 0;
+		report(same, "sampling: resumed result equals the uninterrupted one, bit for bit");
+		(void)a;
+		remove(p);
+	}
+	// exact enumeration: 30 triples, more than 8192 combo triples in all (several batches)
+	{
+		std::vector<int3> tr;
+		for (int i = 0; i < 30; i++) tr.push_back(make_int3(20 + i, 40 + 3 * i, 90 + 2 * i));  // together more than 8192 combo triples
+		const char* p = "/tmp/test_equity3_exact.ckpt";
+		remove(p);
+		std::vector<std::array<double, 3>> ref, a, b;
+		std::vector<uint64_t> n0, n1, n2;
+		e3_exact(tr, ref, n0);
+		uint64_t total = 0;
+		for (uint64_t n : n0) total += n;
+		e3_exact(tr, a, n1, p, 1);
+		report(total > 8192 && relay_peek_done(p) == 8192, "exact: stopped after 1 batch, the file holds 8192 jobs");
+		e3_exact(tr, b, n2, p);
+		bool same = n0 == n2;
+		for (size_t i = 0; i < tr.size(); i++) same = same && memcmp(ref[i].data(), b[i].data(), 3 * sizeof(double)) == 0;
+		report(same, "exact: resumed result equals the uninterrupted one, bit for bit");
+		remove(p);
+	}
+	// the generator: 2 rounds on a coarse target; uninterrupted, stopped and resumed twice, and from an old-format file
+	{
+		const char* A = "/tmp/test_e3_gen_a";
+		const char* B = "/tmp/test_e3_gen_b";
+		const char* C = "/tmp/test_e3_gen_c";
+		for (const char* d : {A, B, C}) {
+			if (system((std::string("rm -rf ") + d + " && mkdir -p " + d).c_str()) != 0) exit(1);
+		}
+		const double target = 0.003;
+		const uint64_t nmax = 16384, n0 = 4096;
+		e3_generate(A, target, nmax, n0);
+		const std::vector<uint8_t> ta = slurp(std::string(A) + "/equity3.bin"), sa = slurp(std::string(A) + "/equity3-se.bin");
+		report(ta.size() > 1000000 && sa.size() == E3_NTRIPLE, "generator: an uninterrupted run wrote the table and the se file");
+		const bool s1 = !e3_generate(B, target, nmax, n0, 3);
+		report(s1 && relay_peek_done(std::string(B) + "/ckpt.bin") == 3 * 60000, "generator: stopped after 3 batches (60,000 triples each)");
+		const bool s2 = !e3_generate(B, target, nmax, n0, 20);  // restores 3 batches, round 0 has 14: ends it, a few batches of round 1
+		report(s2, "generator: second run stopped in a later round");
+		e3_generate(B, target, nmax, n0);
+		report(slurp(std::string(B) + "/equity3.bin") == ta && slurp(std::string(B) + "/equity3-se.bin") == sa,
+		       "generator: stopped twice and resumed gives the same table and se files, byte for byte");
+		// a checkpoint of the old format taken at the end of round 0
+		uint64_t nvalid = 0;
+		for (const int4& c : e3_all_triples()) nvalid += c.w > 0;
+		e3_generate(C, target, nmax, n0, (nvalid + 59999) / 60000);
+		{
+			FILE* f = fopen((std::string(C) + "/ckpt.bin").c_str(), "rb");
+			fseek(f, 4 + 32, SEEK_SET);
+			E3Gen g;
+			g.acc.assign((size_t)E3_NTRIPLE * E3_ACC, 0);
+			g.rounds.assign(E3_NTRIPLE, 0);
+			uint32_t r = 0;
+			const bool ok = e3_read_state(f, r, g);
+			fclose(f);
+			report(ok && r == 0, "generator: relay file at the end of round 0 is readable");
+			f = fopen((std::string(C) + "/ckpt.bin").c_str(), "wb");
+			uint32_t h[2] = {0x4B433345u, E3_NTRIPLE};
+			fwrite(h, 4, 2, f);
+			fwrite(g.rounds.data(), 1, g.rounds.size(), f);
+			fwrite(g.acc.data(), 8, g.acc.size(), f);
+			fclose(f);
+		}
+		e3_generate(C, target, nmax, n0);
+		report(slurp(std::string(C) + "/equity3.bin") == ta && slurp(std::string(C) + "/equity3-se.bin") == sa,
+		       "generator: carried on from an old-format checkpoint gives the same table, byte for byte");
+		for (const char* d : {A, B, C})
+			if (system((std::string("rm -rf ") + d).c_str()) != 0) exit(1);
 	}
 }
 
@@ -468,6 +571,7 @@ int main(int argc, char** argv) {
 	report(worst_z_all < 5, "table-based range equity agrees with combo-level Monte Carlo (< 5 SE of the Monte Carlo)");
 	printf("  worst absolute difference to combo-level Monte Carlo: %.4f%%\n", worst_abs_all * 100);
 
+	test_relay();
 	printf(failures ? "FAIL\n" : "PASS\n");
 	return failures ? 1 : 0;
 }

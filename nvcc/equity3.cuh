@@ -195,7 +195,8 @@ static E3Est e3_est_from_acc(const unsigned long long* a) {
 
 // Samples every given (ordered) class triple with about `samples` valid samples (rounded up to a multiple of
 // E3_TPT); the result is in the given player order. Triples that are impossible get n = 0.
-static std::vector<E3Est> e3_sample_ordered(const std::vector<int3>& triples, uint64_t samples, uint64_t seed) {
+static std::vector<E3Est> e3_sample_ordered(const std::vector<int3>& triples, uint64_t samples, uint64_t seed,
+                                            const std::string& ckpt = "", uint64_t stop_after = 0) {
 	e3_setup_masks();
 	const int T = (int)triples.size();
 	std::vector<int4> cls(T);
@@ -216,10 +217,26 @@ static std::vector<E3Est> e3_sample_ordered(const std::vector<int3>& triples, ui
 		CK(cudaMemcpy(d_jobs, jobs.data(), jobs.size() * 4, cudaMemcpyHostToDevice));
 		CK(cudaMemcpy(d_q, quota.data(), jobs.size() * 4, cudaMemcpyHostToDevice));
 		CK(cudaMemset(d_acc, 0, acc.size() * 8));
+		// relay (with a file): the state of the run is the accumulators
+		Relay relay;
+		relay.path = ckpt;
+		relay.stop_after = stop_after;
+		relay.tag = relay_hash_u64(relay_hash_u64(relay_hash_u64(3, samples), seed), (uint64_t)q);
+		relay.tag = relay_hash(relay.tag, triples.data(), triples.size() * sizeof(int3));
+		relay.save_state = [&](FILE* f) {
+			CK(cudaMemcpy(acc.data(), d_acc, acc.size() * 8, cudaMemcpyDeviceToHost));
+			fwrite(acc.data(), 8, acc.size(), f);
+		};
+		relay.load_state = [&](FILE* f) {
+			std::vector<unsigned long long> a(acc.size());
+			if (fread(a.data(), 8, a.size(), f) != a.size()) return false;
+			CK(cudaMemcpy(d_acc, a.data(), a.size() * 8, cudaMemcpyHostToDevice));
+			return true;
+		};
 		dispatch(jobs.size(), 4096, [&](uint64_t first, uint64_t nj) {
 			// the kernel reads jobs[blockIdx.y], so hand it the slice starting at `first`
 			e3_sample_kernel<<<dim3(E3_TPT / E3_BLOCK, (unsigned)nj), E3_BLOCK>>>(d_cls, d_jobs + first, d_q + first, 0, seed, d_acc);
-		});
+		}, "triples", false, &relay);
 		CK(cudaMemcpy(acc.data(), d_acc, acc.size() * 8, cudaMemcpyDeviceToHost));
 		cudaFree(d_cls); cudaFree(d_jobs); cudaFree(d_q); cudaFree(d_acc);
 	}
@@ -287,7 +304,8 @@ __global__ void e3_exact_kernel(const int4* cls, const uint2* jobs, uint64_t fir
 
 // Exact share of each player (given order) for each class triple, over all valid combo triples and all boards.
 // An impossible triple gets 1/3 each and njob = 0.
-static void e3_exact(const std::vector<int3>& triples, std::vector<std::array<double, 3>>& eq, std::vector<uint64_t>& njob_out) {
+static void e3_exact(const std::vector<int3>& triples, std::vector<std::array<double, 3>>& eq, std::vector<uint64_t>& njob_out,
+                     const std::string& ckpt = "", uint64_t stop_after = 0) {
 	e3_setup_masks();
 	uint32_t binom[47][6] = {};
 	for (int nn = 0; nn <= 46; nn++) {
@@ -320,9 +338,25 @@ static void e3_exact(const std::vector<int3>& triples, std::vector<std::array<do
 		CK(cudaMemcpy(d_cls, cls.data(), T * sizeof(int4), cudaMemcpyHostToDevice));
 		CK(cudaMemcpy(d_jobs, jobs.data(), jobs.size() * sizeof(uint2), cudaMemcpyHostToDevice));
 		CK(cudaMemset(d_s, 0, sum6.size() * 8));
+		// relay (with a file): the state of the run is the per-triple sums
+		Relay relay;
+		relay.path = ckpt;
+		relay.stop_after = stop_after;
+		relay.tag = relay_hash_u64(relay_hash_u64(4, E3_BOARDS), E3_CHUNKS);
+		relay.tag = relay_hash(relay.tag, triples.data(), triples.size() * sizeof(int3));
+		relay.save_state = [&](FILE* f) {
+			CK(cudaMemcpy(sum6.data(), d_s, sum6.size() * 8, cudaMemcpyDeviceToHost));
+			fwrite(sum6.data(), 8, sum6.size(), f);
+		};
+		relay.load_state = [&](FILE* f) {
+			std::vector<unsigned long long> a(sum6.size());
+			if (fread(a.data(), 8, a.size(), f) != a.size()) return false;
+			CK(cudaMemcpy(d_s, a.data(), a.size() * 8, cudaMemcpyHostToDevice));
+			return true;
+		};
 		dispatch(jobs.size(), 8192, [&](uint64_t first, uint64_t nj) {
 			e3_exact_kernel<<<(unsigned)((nj * E3_CHUNKS + 255) / 256), 256>>>(d_cls, d_jobs, first, nj, d_s);
-		});
+		}, "jobs", false, &relay);
 		CK(cudaMemcpy(sum6.data(), d_s, sum6.size() * 8, cudaMemcpyDeviceToHost));
 		cudaFree(d_cls); cudaFree(d_jobs); cudaFree(d_s);
 	}
@@ -447,41 +481,129 @@ static std::vector<double> e3_parse_range(const std::string& spec) {
 	}
 	return w;
 }
-
 // -- generator -----------------------------------------------------------------------------------
-// Adaptive and resumable. Round 0 gives every possible triple n0 samples. Every later round gives the triples
-// whose largest standard error is still above the target about as many samples again (at most doubling, and never
-// more than the estimate of what is still needed), until they all meet the target or reach nmax. State
-// (per-triple accumulators and the number of rounds finished) is written to dir/ckpt.bin; a restart reads it and
-// carries on. Seeds depend on (triple, round), so a chunk redone after a crash gives the same samples.
+// Adaptive and resumable, and a relay (dispatch.cuh): the files are the truth, the GPU only a workspace.
+// Round 0 gives every possible triple n0 samples. Every later round gives the triples whose largest standard error
+// is still above the target about as many samples again (at most doubling, and never more than the estimate of
+// what is still needed), until they all meet the target or reach nmax. A round is a list of triples (ascending),
+// done in batches; after EVERY batch dir/ckpt.bin is written (atomically, flushed): the round number, the rounds
+// finished per triple and the accumulators, 47 MB. A restart reads it and carries on from the next batch; at most
+// the running batch is lost. Seeds depend on (triple, round), so a batch redone after a crash gives the same samples
+// and the result equals an uninterrupted run, bit for bit (the accumulators are integers).
+//
+// Why the file is that big and the batches are too: a batch is made to take 1 to 2 seconds (about 6x10^9 samples,
+// at most 60,000 triples, at least 1,024), so writing 47 MB after each costs a small part of the time. A restart
+// finds the list of the round in progress again from the state: the triples whose rounds[] is already past the
+// round plus the ones still due by their standard error (the standard error of a triple that has not been done in
+// this round has not changed, so the same triples are due), in ascending order; the finished ones form its prefix.
 struct E3Gen {
 	std::vector<int4> cls;
 	std::vector<unsigned long long> acc;
 	std::vector<uint8_t> rounds;  // rounds finished per triple
 };
 
-static bool e3_save_ckpt(const std::string& dir, const E3Gen& g) {
-	std::string tmp = dir + "/ckpt.tmp", fin = dir + "/ckpt.bin";
-	FILE* f = fopen(tmp.c_str(), "wb");
-	if (!f) return false;
-	uint32_t h[2] = {0x4B433345u, E3_NTRIPLE};
-	fwrite(h, 4, 2, f);
+static void e3_write_state(FILE* f, uint32_t round, const E3Gen& g) {
+	fwrite(&round, 4, 1, f);
 	fwrite(g.rounds.data(), 1, g.rounds.size(), f);
 	fwrite(g.acc.data(), 8, g.acc.size(), f);
-	bool ok = fclose(f) == 0;
-	return ok && rename(tmp.c_str(), fin.c_str()) == 0;
 }
 
-static bool e3_load_ckpt(const std::string& dir, E3Gen& g) {
-	FILE* f = fopen((dir + "/ckpt.bin").c_str(), "rb");
-	if (!f) return false;
-	uint32_t h[2];
-	bool ok = fread(h, 4, 2, f) == 2 && h[0] == 0x4B433345u && h[1] == E3_NTRIPLE;
-	ok = ok && fread(g.rounds.data(), 1, g.rounds.size(), f) == g.rounds.size();
-	ok = ok && fread(g.acc.data(), 8, g.acc.size(), f) == g.acc.size();
-	fclose(f);
-	if (!ok) { fprintf(stderr, "checkpoint in %s is unreadable\n", dir.c_str()); exit(1); }
+static bool e3_read_state(FILE* f, uint32_t& round, E3Gen& g) {
+	uint32_t r = 0;
+	if (fread(&r, 4, 1, f) != 1 || r > 255) return false;
+	if (fread(g.rounds.data(), 1, g.rounds.size(), f) != g.rounds.size()) return false;
+	if (fread(g.acc.data(), 8, g.acc.size(), f) != g.acc.size()) return false;
+	round = r;
 	return true;
+}
+
+// The tag of a relay file: everything the samples of a round depend on.
+static uint64_t e3_relay_tag(uint32_t round, double target_se, uint64_t nmax, uint64_t n0, uint64_t seed) {
+	uint64_t h = relay_hash_u64(14695981039346656037ull, 0x33455149ull);
+	h = relay_hash_u64(h, round);
+	h = relay_hash(h, &target_se, sizeof target_se);
+	h = relay_hash_u64(h, nmax);
+	h = relay_hash_u64(h, n0);
+	h = relay_hash_u64(h, seed);
+	h = relay_hash_u64(h, E3_NTRIPLE);
+	return h;
+}
+
+// What dir/ckpt.bin holds: 0 nothing usable, 1 a relay file (this version), 2 the per-round checkpoint of the old
+// version (no round number: the round in progress is the highest rounds[] minus one).
+struct E3Import {
+	int kind = 0;
+	uint32_t round = 0;
+	uint64_t total = 0, per_batch = 0, done = 0;  // of the relay header
+};
+
+static E3Import e3_import(const std::string& path, E3Gen& g, double target_se, uint64_t nmax, uint64_t n0, uint64_t seed) {
+	E3Import im;
+	FILE* f = fopen(path.c_str(), "rb");
+	if (!f) return im;
+	char magic[4];
+	bool ok = fread(magic, 1, 4, f) == 4;
+	if (ok && memcmp(magic, RELAY_MAGIC, 4) == 0) {
+		uint64_t head[4];
+		uint32_t round = 0;
+		ok = fread(head, sizeof head, 1, f) == 1 && e3_read_state(f, round, g);
+		if (ok && head[0] == e3_relay_tag(round, target_se, nmax, n0, seed)) {
+			im.kind = 1; im.round = round; im.total = head[1]; im.per_batch = head[2]; im.done = head[3];
+		} else {
+			fprintf(stderr, "[relay] %s is for other parameters or unreadable: starting from scratch\n", path.c_str());
+		}
+	} else if (ok) {
+		uint32_t h[2];
+		memcpy(&h[0], magic, 4);
+		ok = fread(&h[1], 4, 1, f) == 1 && h[0] == 0x4B433345u && h[1] == E3_NTRIPLE &&
+		     fread(g.rounds.data(), 1, g.rounds.size(), f) == g.rounds.size() && fread(g.acc.data(), 8, g.acc.size(), f) == g.acc.size();
+		if (ok) {
+			im.kind = 2;
+			unsigned top = 0;
+			for (uint8_t r : g.rounds) top = std::max<unsigned>(top, r);
+			im.round = top ? top - 1 : 0;
+			fprintf(stderr, "[relay] %s is a checkpoint of the old format: continuing round %u from it\n", path.c_str(), im.round);
+		} else {
+			fprintf(stderr, "[relay] %s is unreadable: starting from scratch\n", path.c_str());
+		}
+	}
+	fclose(f);
+	if (im.kind == 0) {
+		std::fill(g.acc.begin(), g.acc.end(), 0ull);
+		std::fill(g.rounds.begin(), g.rounds.end(), (uint8_t)0);
+	}
+	return im;
+}
+
+// The triples of a round in ascending order, with their quotas (in units of E3_TPT samples). Those already past
+// the round (done in it before an interruption) come first and get quota 0; the rest are the ones still due.
+static void e3_round_jobs(const E3Gen& g, uint32_t round, double target_se, uint64_t nmax, uint64_t n0, std::vector<uint32_t>& jobs,
+                          std::vector<uint32_t>& quota) {
+	jobs.clear();
+	quota.clear();
+	for (uint32_t t = 0; t < E3_NTRIPLE; t++) {
+		if (!g.cls[t].w) continue;
+		if (g.rounds[t] > round) {  // done in this round already
+			jobs.push_back(t);
+			quota.push_back(0);
+			continue;
+		}
+		if (g.rounds[t] != round) continue;
+		uint64_t add;
+		if (round == 0) {
+			add = n0;
+		} else {
+			E3Est e = e3_est_from_acc(&g.acc[(size_t)t * E3_ACC]);
+			const double se = std::max(e.se[0], std::max(e.se[1], e.se[2]));
+			if (se <= target_se || e.n >= nmax) continue;
+			// n scales as 1/se^2; the estimate is noisy, so ask for 10% more and never more than double
+			const double need = e.n * (se * se) / (target_se * target_se) * 1.1 - e.n;
+			add = (uint64_t)std::min<double>(std::min<double>(need, (double)e.n), (double)(nmax - e.n));
+			add = std::max<uint64_t>(add, 4 * E3_TPT);
+		}
+		jobs.push_back(t);
+		quota.push_back((uint32_t)((add + E3_TPT - 1) / E3_TPT));
+	}
 }
 
 struct E3Stats {
@@ -531,17 +653,21 @@ static E3Stats e3_finalize(const E3Gen& g, std::vector<uint16_t>& table, std::ve
 	return st;
 }
 
-static void e3_generate(const std::string& dir, double target_se, uint64_t nmax, uint64_t n0) {
+// stop_after_batches: for tests (stop cleanly after that many batches in this call; 0 = run to the end).
+// Returns true when the table was written (false when stopped early).
+static bool e3_generate(const std::string& dir, double target_se, uint64_t nmax, uint64_t n0, uint64_t stop_after_batches = 0) {
 	const uint64_t SEED = 20261124;
 	E3Gen g;
 	g.cls = e3_all_triples();
 	g.acc.assign((size_t)E3_NTRIPLE * E3_ACC, 0);
 	g.rounds.assign(E3_NTRIPLE, 0);
-	const bool resumed = e3_load_ckpt(dir, g);
+	const std::string path = dir + "/ckpt.bin";
+	E3Import im = e3_import(path, g, target_se, nmax, n0, SEED);
+	const bool resumed = im.kind != 0;
 	uint64_t nvalid = 0;
 	for (auto& c : g.cls) nvalid += c.w > 0;
 	printf("%u triples, %llu possible; target SE %.4f%%, n0 %llu, nmax %llu%s\n", E3_NTRIPLE, (unsigned long long)nvalid,
-	       target_se * 100, (unsigned long long)n0, (unsigned long long)nmax, resumed ? " (resumed from checkpoint)" : "");
+	       target_se * 100, (unsigned long long)n0, (unsigned long long)nmax, resumed ? " (resumed from the relay file)" : "");
 	fflush(stdout);
 
 	int4* d_cls;
@@ -550,38 +676,70 @@ static void e3_generate(const std::string& dir, double target_se, uint64_t nmax,
 	CK(cudaMalloc(&d_acc, g.acc.size() * 8));
 	CK(cudaMemcpy(d_cls, g.cls.data(), g.cls.size() * sizeof(int4), cudaMemcpyHostToDevice));
 	CK(cudaMemcpy(d_acc, g.acc.data(), g.acc.size() * 8, cudaMemcpyHostToDevice));
-	const size_t CH = 4096;  // triples per launch
+	const size_t CHMAX = 65535;  // triples per launch: the grid's y dimension
 	uint32_t *d_jobs, *d_q;
-	CK(cudaMalloc(&d_jobs, CH * 4));
-	CK(cudaMalloc(&d_q, CH * 4));
+	CK(cudaMalloc(&d_jobs, CHMAX * 4));
+	CK(cudaMalloc(&d_q, CHMAX * 4));
 
 	auto t_start = std::chrono::steady_clock::now();
 	auto secs = [&]() { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t_start).count(); };
-	double last_ckpt = 0, last_print = 0;
-	uint64_t samples_done = 0;
-	for (uint32_t round = 0; round < 40; round++) {
+	double last_print = 0;
+	uint64_t samples_done = 0, batches_total = 0;
+	bool stopped = false;
+	for (uint32_t round = resumed ? im.round : 0; round < 40; round++) {
 		std::vector<uint32_t> jobs, quota;
-		for (uint32_t t = 0; t < E3_NTRIPLE; t++) {
-			if (!g.cls[t].w || g.rounds[t] != round) continue;
-			uint64_t add;
-			if (round == 0) {
-				add = n0;
-			} else {
-				E3Est e = e3_est_from_acc(&g.acc[(size_t)t * E3_ACC]);
-				const double se = std::max(e.se[0], std::max(e.se[1], e.se[2]));
-				if (se <= target_se || e.n >= nmax) continue;
-				// n scales as 1/se^2; the estimate is noisy, so ask for 10% more and never more than double
-				const double need = e.n * (se * se) / (target_se * target_se) * 1.1 - e.n;
-				add = (uint64_t)std::min<double>(std::min<double>(need, (double)e.n), (double)(nmax - e.n));
-				add = std::max<uint64_t>(add, 4 * E3_TPT);
-			}
-			jobs.push_back(t);
-			quota.push_back((uint32_t)((add + E3_TPT - 1) / E3_TPT));
-		}
+		e3_round_jobs(g, round, target_se, nmax, n0, jobs, quota);
+		size_t finished = 0;  // the prefix that is done already (only after a restart)
+		while (finished < jobs.size() && quota[finished] == 0) finished++;
 		if (jobs.empty()) break;
-		printf("round %u: %zu triples\n", round, jobs.size());
+		// batch size: about 6e9 samples (1 to 2 s), between 1,024 and 60,000 triples; a restart keeps the file's
+		uint64_t CH;
+		const bool continuing = resumed && round == im.round;
+		if (continuing && im.kind == 1) {
+			CH = im.per_batch;
+		} else if (continuing && im.kind == 2) {
+			CH = 4096;  // the old version's batch
+		} else {
+			double sum = 0;
+			for (uint32_t q : quota) sum += q;
+			const double mean_samples = sum / jobs.size() * E3_TPT;
+			CH = (uint64_t)std::min(60000.0, std::max(1024.0, 6e9 / std::max(mean_samples, 1.0)));
+		}
+		if (continuing && im.kind == 1 && (im.total != jobs.size() || im.done != finished)) {
+			fprintf(stderr, "[relay] %s does not match the state it holds (round %u: %llu jobs in the file, %zu rebuilt; %llu done, %zu "
+			        "rebuilt): delete it to start again\n", path.c_str(), round, (unsigned long long)im.total, jobs.size(),
+			        (unsigned long long)im.done, finished);
+			exit(1);
+		}
+		printf("round %u: %zu triples, batches of %llu%s\n", round, jobs.size(), (unsigned long long)CH,
+		       finished ? (", " + std::to_string(finished) + " done already").c_str() : "");
 		fflush(stdout);
-		dispatch(jobs.size(), CH, [&](uint64_t first_, uint64_t count) {
+
+		Relay relay;
+		relay.path = path;
+		relay.tag = e3_relay_tag(round, target_se, nmax, n0, SEED);
+		relay.every_s = 0;  // after every batch
+		relay.stop_after = stop_after_batches ? (stop_after_batches > batches_total ? stop_after_batches - batches_total : 1) : 0;
+		relay.save_state = [&](FILE* f) {
+			CK(cudaMemcpy(g.acc.data(), d_acc, g.acc.size() * 8, cudaMemcpyDeviceToHost));
+			e3_write_state(f, round, g);
+		};
+		relay.load_state = [&](FILE* f) {
+			uint32_t r = 0;
+			if (!e3_read_state(f, r, g) || r != round) return false;
+			CK(cudaMemcpy(d_acc, g.acc.data(), g.acc.size() * 8, cudaMemcpyHostToDevice));
+			return true;
+		};
+		if (continuing && im.kind == 2) {  // write the old checkpoint's state as a relay file first (it holds `finished` jobs)
+			if (finished % CH == 0 || finished == jobs.size()) {
+				if (!relay_save(relay, jobs.size(), CH, finished)) fprintf(stderr, "[relay] cannot write %s\n", path.c_str());
+			} else {
+				fprintf(stderr, "[relay] old checkpoint at %zu jobs does not fit batches of %llu: delete %s to start again\n", finished,
+				        (unsigned long long)CH, path.c_str());
+				exit(1);
+			}
+		}
+		uint64_t ran = dispatch(jobs.size(), CH, [&](uint64_t first_, uint64_t count) {
 			const size_t first = (size_t)first_;
 			const unsigned nj = (unsigned)count;
 			CK(cudaMemcpy(d_jobs, &jobs[first], nj * 4, cudaMemcpyHostToDevice));
@@ -600,19 +758,16 @@ static void e3_generate(const std::string& dir, double target_se, uint64_t nmax,
 				fflush(stdout);
 				last_print = now;
 			}
-			if (now - last_ckpt > 120) {
-				CK(cudaMemcpy(g.acc.data(), d_acc, g.acc.size() * 8, cudaMemcpyDeviceToHost));
-				if (!e3_save_ckpt(dir, g)) fprintf(stderr, "warning: cannot write checkpoint\n");
-				last_ckpt = now;
-			}
-		});
-		CK(cudaMemcpy(g.acc.data(), d_acc, g.acc.size() * 8, cudaMemcpyDeviceToHost));
-		if (!e3_save_ckpt(dir, g)) fprintf(stderr, "warning: cannot write checkpoint\n");
-		last_ckpt = secs();
+		}, "e3", false, &relay);
+		batches_total += ran;
+		if (stop_after_batches && relay.done < jobs.size()) { stopped = true; break; }
 		printf("round %u done at %.0fs\n", round, secs());
 		fflush(stdout);
+		if (stop_after_batches && batches_total >= stop_after_batches) { stopped = true; break; }
 	}
+	CK(cudaMemcpy(g.acc.data(), d_acc, g.acc.size() * 8, cudaMemcpyDeviceToHost));
 	cudaFree(d_cls); cudaFree(d_acc); cudaFree(d_jobs); cudaFree(d_q);
+	if (stopped) return false;
 	std::vector<uint16_t> table;
 	std::vector<uint8_t> se;
 	E3Stats st = e3_finalize(g, table, se);
@@ -626,4 +781,5 @@ static void e3_generate(const std::string& dir, double target_se, uint64_t nmax,
 	printf("standard error per triple (largest of the 3 players): mean %.4f%%, median %.4f%%, 99th pct %.4f%%, max %.4f%%\n",
 	       st.se_mean * 100, st.se_median * 100, st.se_p99 * 100, st.se_max * 100);
 	printf("wrote %s/equity3.bin and equity3-se.bin  (%.1fs this run)\n", dir.c_str(), secs());
+	return true;
 }

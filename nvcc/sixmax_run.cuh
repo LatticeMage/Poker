@@ -9,7 +9,18 @@ struct RunOpts {
 	long long iters1 = 3000, iters2 = 20000, report = 1000;
 	std::string out = "data/out", ckpt;
 	double seed_k = 1.0;  // regret mass given to the starting strategy
+	long long batch = 50;  // iterations per relay batch (about 1.3 s at 100bb), saved after each
 };
+
+// The batch size of a relay: the largest divisor of `report` up to `cap` (reports then fall on batch ends), unless
+// that is under a quarter of `cap`.
+static long long sx_pick_batch(long long cap, long long report) {
+	if (cap < 1) cap = 1;
+	if (report < 1) return cap;
+	for (long long b = std::min(cap, report); b >= 1; b--)
+		if (report % b == 0) return b * 4 >= cap ? b : cap;
+	return cap;
+}
 
 static std::string data_dir() {
 	const char* e = getenv("POKER_DATA");
@@ -318,12 +329,16 @@ static int run_solve(const RunOpts& o) {
 		fflush(stdout);
 	};
 	// stage 1: first-in decisions only, every reply as in the source charts
-	for (long long it = 0; it < o.iters1;) {
-		const long long step = std::min(o.report, o.iters1 - it);
-		sol.iterate(step);
-		it += step;
-		line("stage1", it, sol.exploit());
-	}
+	// Both stages are relays (sixmax.cuh, Solver6::run): the state goes to a file after every batch, so a run that is
+	// started again carries on from the last batch. Stage 1 has its own file, PREFIX-s1.ckpt.
+	const long long batch = sx_pick_batch(o.batch, o.report);
+	const std::string relay1 = o.ckpt.empty() ? "" : o.ckpt + "-s1.ckpt", relay2 = o.ckpt.empty() ? "" : o.ckpt + ".ckpt";
+	auto crossed = [&](long long done, long long total) { return done / o.report > (done - std::min(done, batch)) / o.report || done == total; };
+	if (!relay1.empty() && relay_peek_done(relay1) > 0)
+		printf("relay file %s holds stage 1 at iteration %llu of %lld\n", relay1.c_str(), (unsigned long long)relay_peek_done(relay1), o.iters1);
+	sol.run(o.iters1, relay1, batch, [&](long long done) {
+		if (crossed(done, o.iters1)) line("stage1", done, sol.exploit());
+	});
 	// stage 2: everything, starting from stage 1
 	std::vector<double> sigma = sol.averaged();
 	std::vector<bool> fz2(nodes.size(), false);
@@ -338,16 +353,30 @@ static int run_solve(const RunOpts& o) {
 	}
 	sol.set_frozen(fz2);
 	sol.seed(sigma, o.seed_k);
-	if (!o.ckpt.empty() && sol.load((o.ckpt + ".ckpt").c_str())) printf("resumed stage 2 at iteration %lld\n", sol.done);
-	std::vector<ConvPoint> conv;
-	while (sol.done < o.iters2) {
-		const long long step = std::min(o.report, o.iters2 - sol.done);
-		sol.iterate(step);
-		const Solver6::Gap g = sol.exploit();
-		conv.push_back({sol.done, g});
-		line("stage2", sol.done, g);
-		if (!o.ckpt.empty()) sol.save((o.ckpt + ".ckpt").c_str());
-	}
+	if (!relay2.empty() && relay_peek_done(relay2) > 0)
+		printf("relay file %s holds stage 2 at iteration %llu of %lld\n", relay2.c_str(), (unsigned long long)relay_peek_done(relay2), o.iters2);
+	std::vector<ConvPoint> conv;  // part of the relay state, so that a resumed run writes the same convergence list
+	sol.run(o.iters2, relay2, batch,
+	        [&](long long done) {
+		        if (!crossed(done, o.iters2)) return;
+		        const Solver6::Gap g = sol.exploit();
+		        conv.push_back({done, g});
+		        line("stage2", done, g);
+	        },
+	        [&](FILE* f) {
+		        const uint64_t n = conv.size();
+		        fwrite(&n, sizeof n, 1, f);
+		        for (const ConvPoint& c : conv) fwrite(&c, sizeof c, 1, f);
+	        },
+	        [&](FILE* f) {
+		        uint64_t n = 0;
+		        if (fread(&n, sizeof n, 1, f) != 1 || n > 1000000) return false;
+		        std::vector<ConvPoint> v(n);
+		        for (ConvPoint& c : v)
+			        if (fread(&c, sizeof c, 1, f) != 1) return false;
+		        conv = v;
+		        return true;
+	        });
 	std::string js = write_result(o, R, sol, src, conv, sol.done);
 	const std::string path = o.out + "/sixmax-" + fmtnum(R.stack) + ".json";
 	FILE* f = fopen(path.c_str(), "wb");

@@ -32,6 +32,8 @@ Each tool is a `.cu` program; code shared by tools lives in a `.cuh`; the checks
 | `data/equity-exact.bin`                                            | The exact 169×169 matrix (float64, row-major, 228,488 bytes), the input of the solvers. Regenerate: `./equity exact data/equity-exact.bin` (5 min on an RTX 4060 Ti) |
 | `solve.cuh`, `solve.cu`, `test_solve.cu`, `test_solve_external.cu` | Heads-up preflop CFR+ solver, its command line and its checks (see "Heads-up preflop solver")                                                                        |
 | `data/out/headsup-<bb>.json`                                       | Solved heads-up trees, 5 to 150bb                                                                                                                                    |
+| `solve_realization.cuh`, `test_solve_realization.cu`, `solve_compare.cu` | The solver reading the realisation table (`--real`), its checks, a comparison of two result sets (see "The solver with the realisation table") |
+| `data/out/headsup-<bb>-real.json`, `-real-cap.json`                | The same trees solved with the realisation table (default rules / out-of-range classes capped)                                   |
 | `equity3.cuh`, `equity3.cu`, `test_equity3.cu`                     | Three-way equity: kernels, table format and lookup, range function; command line; checks                                                                             |
 | `data/equity3.bin`, `data/equity3-se.bin`                          | The generated three-way table (6.5 MB) and its standard errors (0.8 MB)                                                                                              |
 | `realization.cuh`, `realization.cu`, `test_realization.cu`         | Realisation factors: kernels and betting tree; command line (`run`, `show`, `compare`, `sens`); checks                                                               |
@@ -204,6 +206,95 @@ differ, as they should.
 
 Exploitability of the 30,000-iteration run (bb, from both seats): 5 to 50 bb below 0.000005, 60 to 150 bb
 about 0.00001. SB value in bb: 5: +0.0562, 10: -0.0168, 20: -0.0266, 40: +0.0133, 80: +0.0186, 150: +0.0154.
+
+## The solver with the realisation table (`--real`)
+
+By default a call that sees a flop is valued with the old formula. `--real data/realization.json` values it with
+the per-class factors of the `realization` tool instead. Off by default, so the old output, the TypeScript
+cross-check and every test above are untouched (the formula run reproduces the committed `headsup-<bb>.json`
+byte for byte). Code: `solve_realization.cuh` (table reader, matrix builder; the design is written at the top of
+the file), checks: `test_solve_realization.cu`, comparison of two result sets: `solve_compare.cu`.
+
+```bash
+$NVCC -O3 -fmad=false -arch=sm_89 -o solve solve.cu
+./solve --stacks 5,10,15,20,30,40,50,60,80,100,150 --iters 30000 --out out --suffix -real --real data/realization.json
+#   --real-out formula|cap|none   classes outside the table's ranges (default formula)
+#   --real-limp formula|srp       limped pots (default formula)
+$NVCC -O3 -fmad=false -arch=sm_89 -o test_solve_realization test_solve_realization.cu && ./test_solve_realization
+$NVCC -O3 -arch=sm_89 -o solve_compare solve_compare.cu
+./solve_compare data/out headsup-%s.json data/out headsup-%s-real.json 5,10,20,40,100 20,40,100   # stacks, hand lists
+```
+
+**Design decisions**
+
+1. **Pot type** from the number of raises before the call: open = single-raised (table `srp`), 3-bet = `3bet`, 4-bet
+   = `4bet`; an all-in call is still raw equity. **Limped pots** (check after a limp, call of a raise after a limp)
+   have no data and keep the old formula (`--real-limp srp` borrows the single-raised factors instead; sensitivity below).
+2. **Depth.** What counts is the stack behind on the flop, `x = stack - c` (`c` = chips each has in). Between the
+   table's depths (20, 40, 80, 100; 4-bet pot 40, 80, 100) the factor is linear in `x`; above the deepest it is the
+   deepest (150 bb uses 100 bb: no extrapolation); below the shallowest it goes linearly to 1 at `x = 0` (nothing
+   behind: no realisation effect). So 5 to 15 bb get a fraction of the 20 bb deviation. At 5 and 10 bb nobody calls an
+   open and sees a flop with a hand that matters, so those two solutions barely move (5 bb: BB raise-vs-limp only).
+3. **Zero-sum.** The table gives a factor per class and side, not per matchup. For SB class `i`, BB class `j`, SB raw
+   equity `e`: `a = f_ip(i) e`, `b = f_oop(j) (1 - e)`, SB gets `a / (a + b)`, BB `b / (a + b)`. The two add to the pot
+   in every matchup (checked: largest error 1.4e-14 on pot weights up to about 1100), and factors of 1 give the raw
+   matrices bit for bit. **Approximation:** a class's table factor is its average against the table's whole opponent
+   range, not against that hand; the normalisation then spreads the gap between the sides in ratio; the table was made with
+   the 100 bb 6-max ranges and fixed policies (see Limits of the realisation tool), and the solver's ranges differ.
+4. **Classes outside the table's ranges** (factors up to 1.7) decide the result, because the solver plays exactly those
+   hands at the edge of its ranges. Default `formula`: they keep the old formula (the table speaks only where it was
+   measured). `cap`: their factor is limited to their side's equity-weighted range factor. `none`: the table as is.
+
+**Result.** 30,000 iterations, exact matrix, exploitability at most 0.00001 bb printed (test: below 0.0009 at 3000
+iterations for every rule). Files: `data/out/headsup-<bb>-real.json` (default rules) and
+`headsup-<bb>-real-cap.json` (cap). Same schema as `headsup-<bb>.json` plus a top-level string field
+`"realisation"` that names the model (`table:realization/v1,out-of-range=formula,limped=formula`); a reader that
+ignores unknown fields is unaffected. SB value, old formula -> table (bb): 20: -0.0266 -> -0.0311, 30: -0.0012 -> -0.0054,
+40: +0.0133 -> +0.0110, 100: +0.0166 -> +0.0162, 150: +0.0154 -> +0.0171.
+
+Frequencies in % (combo weighted), old formula -> table, default rules (`solve_compare`). The "defends" rows only where SB
+actually opens 2.5 (otherwise the node is not reached). 5 and 10 bb: no change in SB's play, BB-vs-limp at 5 bb 59.9 -> 58.7.
+
+| Depth  | SB fold     | SB limp     | SB raise 2.5 | SB shove    | BB defends 2.5 open | BB 3-bets 2.5 open | BB calls shove | BB raises a limp |
+| ------ | ----------- | ----------- | ------------ | ----------- | ------------------- | ------------------ | -------------- | ---------------- |
+| 15 bb  | 13.6 -> 13.6 | 61.4 -> 63.2 | 4.6 -> 0.0   | 20.4 -> 23.2 | -                   | -                  | 27.2 -> 26.7   | 40.5 -> 40.0     |
+| 20 bb  | 7.8 -> 5.7  | 71.5 -> 76.1 | 17.1 -> 11.6 | 3.6 -> 6.6  | 69.0 -> 72.8        | 24.2 -> 24.0       | 21.3 -> 20.6   | 36.1 -> 34.9     |
+| 30 bb  | 7.2 -> 5.7  | 63.7 -> 65.6 | 29.1 -> 28.7 | 0 -> 0      | 72.8 -> 77.6        | 20.5 -> 20.6       | 15.8 -> 15.0   | 35.9 -> 35.2     |
+| 40 bb  | 9.3 -> 8.1  | 52.5 -> 55.2 | 38.2 -> 36.7 | 0 -> 0      | 76.9 -> 79.1        | 18.7 -> 19.1       | 13.7 -> 13.1   | 38.9 -> 38.0     |
+| 50 bb  | 12.7 -> 12.4 | 41.1 -> 43.0 | 46.3 -> 44.6 | 0 -> 0      | 81.1 -> 83.7        | 17.3 -> 17.8       | 10.1 -> 8.9    | 42.2 -> 41.2     |
+| 60 bb  | 16.0 -> 13.4 | 32.8 -> 38.6 | 51.3 -> 48.0 | 0 -> 0      | 82.8 -> 83.7        | 16.9 -> 17.2       | 8.1 -> 8.0     | 44.4 -> 43.2     |
+| 80 bb  | 16.0 -> 13.3 | 33.1 -> 36.9 | 50.9 -> 49.8 | 0 -> 0      | 84.0 -> 83.7        | 17.8 -> 18.0       | 6.4 -> 6.3     | 44.8 -> 43.1     |
+| 100 bb | 13.0 -> 13.0 | 37.2 -> 37.7 | 49.9 -> 49.4 | 0 -> 0      | 82.3 -> 83.7        | 18.9 -> 18.9       | 5.2 -> 5.3     | 43.2 -> 42.5     |
+| 150 bb | 12.2 -> 11.5 | 42.3 -> 43.0 | 45.5 -> 45.5 | 0 -> 0      | 81.0 -> 83.7        | 19.6 -> 18.9       | 3.6 -> 3.7     | 41.6 -> 40.1     |
+
+(The full per-depth table, every row, is the output of `solve_compare`.) The changes are small, at most a few points
+and 6 at the worst (SB limps at 60 bb), and the same size as the solver's own slack between neighbouring depths.
+
+**Which hands change** (default rules). SB plays more: 20 bb 42s, 53o, 63o (limp/shove, previously folded); 40 bb 62s, 73o,
+43s; at 100 bb none. BB defends more: 20 bb Q5o, Q6o, 85o, J5o, Q7o; 40 bb 85o, J3o; 100 bb T4o, T5o (53o drops out). Nobody plays
+less. BB 3-bets: with the table more A5o/A2o/A8o/A6s/A7s/66 and KTo/QTs, fewer suited connectors (20 bb: T8s, 97s, 75s, 64s, 54s;
+40 bb: J8s, 98s, 87s, 65s, 54s; 100 bb: JTs 100 -> 49%). Mixed 3-bet bluffs are the least stable part of any
+equilibrium, so single hands there should not be over-read.
+
+**Plausibility and warnings**
+
+- Direction is plausible for the SB: it plays slightly wider (low suited hands, a few offsuit gappers), limps a bit more
+  at 20 to 60 bb, raises less at 20 bb, and BB defends a little wider (+1 to +5 points). The 3-bet range moves towards
+  unsuited ace blockers and away from suited connectors, which the table explains (out-of-position suited connectors
+  realise well when they call, 1.05 in the single-raised pot, but less as 3-bet bluffs). The expected "fewer weak offsuit
+  hands" did **not** appear: BB adds offsuit junk (T4o, T5o, Q5o at the edge) because the table gives out-of-position hands
+  at the weak end a factor around 1 (T8o 1.02, Q8o 0.96 at 100 bb) against 0.89 from the old formula. That is the least reliable part.
+- **The out-of-range rule matters more than the table.** Big blind defence of the 2.5 open, old -> table, at 20 / 40 / 100 bb:
+  default (formula) 69 -> 73 / 77 -> 79 / 82 -> 84; `cap` 69 -> 80 / 77 -> 86 / 82 -> 90; `none` (table as is) 100% defend at 40
+  and 100 bb, which is plainly wrong (T2o called). A published number from the table alone would be an artefact of
+  inflated out-of-range factors. SB limp at 100 bb, same three rules: 37.7 / 38.2 / 23.9 (old 37.2). `cap` files are kept (`-real-cap`) for comparison.
+- **Limped pots** use the old formula; borrowing single-raised factors (`--real-limp srp`) moves SB limp frequency (change against the default rule)
+  by -3.5 / +0.5 / +5.6 points at 20 / 40 / 100 bb (100 bb: 43.3 against 37.7), so the limp frequency is uncertain by about that much.
+- SB limp frequencies at 20 to 60 bb (50 to 75%) were already high with the old formula; the table does not change that
+  picture. They come from the tree (one raise ladder, no limp-raise sizes between) as much as from realisation.
+- The 3-bet and 4-bet pots rest on 13/26 and 14/7 in-range classes; with the default rule almost every hand there stays on
+  the old formula, so those nodes change little. The solution is "old formula, corrected where the table has data", not a
+  postflop-accurate solution. Nothing here has been checked against a postflop solver.
 
 # equity3: three-way equity
 

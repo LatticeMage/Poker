@@ -11,12 +11,9 @@ import type {
 	SpotList
 } from '$lib/types/ranges';
 import type { Card } from './cards';
-import headsUp10 from './data/headsup-10.json';
-import headsUp20 from './data/headsup-20.json';
-import headsUp40 from './data/headsup-40.json';
-import headsUp80 from './data/headsup-80.json';
 import pushFoldMixData from './data/pushfold-mix.json';
 import { evaluate } from './evaluate';
+import { HEADS_UP_STACKS as SOLVED_STACKS, solvedChart } from './headsup';
 import * as postflop from './postflop';
 import {
 	EQUITY_VS_RANDOM,
@@ -103,7 +100,8 @@ export function rangeChart(players: number): RangeChart {
 			label: range.label,
 			url: range.url,
 			hands: byStrength(range.hands),
-			mix: openMix(range.hands)
+			mix: range.mix ?? openMix(range.hands),
+			...(range.limp ? { limp: range.limp } : {})
 		})),
 		order: [...ORDER],
 		equity_vs_random: { ...EQUITY_VS_RANDOM }
@@ -430,19 +428,12 @@ export function boardEquity(q: BoardQuery): BoardEquity {
 	};
 }
 
-const HEADS_UP: Record<number, HeadsUpChart> = {
-	10: headsUp10 as unknown as HeadsUpChart,
-	20: headsUp20 as unknown as HeadsUpChart,
-	40: headsUp40 as unknown as HeadsUpChart,
-	80: headsUp80 as unknown as HeadsUpChart
-};
-
-/** Stack depths with a solved heads-up preflop tree. */
-export const HEADS_UP_STACKS = Object.keys(HEADS_UP).map(Number);
+/** Stack depths with a solved heads-up preflop tree (every data/headsup-<bb>.json). */
+export const HEADS_UP_STACKS: readonly number[] = SOLVED_STACKS;
 
 /** The solved heads-up preflop tree (small blind vs big blind) for one stack depth. */
 export function headsUpChart(stackBb: number): HeadsUpChart {
-	const chart = HEADS_UP[stackBb];
+	const chart = solvedChart(stackBb);
 	if (!chart) throw new ChartError(`No heads-up chart for ${stackBb}bb`);
 	return chart;
 }

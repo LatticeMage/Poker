@@ -8,10 +8,9 @@
 -->
 
 <script lang="ts">
-	import { boardRequest, loadBoard, loadSpotList } from '$lib/actions/ranges';
+	import { attempt, boardEquity, spotList as getSpotList } from '$lib/poker/lookup';
 	import { boardInputs as inputs } from '$lib/stores/boardEquity.svelte';
-	import { rangeStore } from '$lib/stores/ranges.svelte';
-	import type { BoardEquity, BoardQuery } from '$lib/types/ranges';
+	import type { BoardQuery } from '$lib/types/ranges';
 	import { type Card, makeCard } from '$lib/utils/cards';
 	import { holeToHand } from '$lib/utils/hands';
 	import CardSelect from './CardSelect.svelte';
@@ -45,7 +44,7 @@
 	];
 
 	// Who can face whom comes from the server (the charts that exist).
-	const spotList = $derived(rangeStore.spotList);
+	const spotList = $derived(attempt(getSpotList).value);
 	const openers = $derived(spotList ? Object.keys(spotList.vs_3bet) : []);
 	// The seat in use is the picked one when a chart exists for it; the pick itself is not changed, so
 	// it comes back when it is possible again.
@@ -79,30 +78,13 @@
 			view: 'mine'
 		};
 	});
-	// The heat map of their range is a second request for the same spot.
-	const theirQuery = $derived(query ? { ...query, view: 'theirs' as const } : null);
-	const theirKey = $derived(theirQuery ? boardRequest(theirQuery) : null);
-	const theirGrid = $derived(theirKey ? rangeStore.boards[theirKey]?.unknown.grid : undefined);
-	const key = $derived(query ? boardRequest(query) : null);
-	const fresh = $derived(key ? rangeStore.boards[key] : undefined);
-
-	// Keep showing the previous answer (dimmed) while the next one loads.
-	let last = $state.raw<BoardEquity | null>(null);
-	const result = $derived(fresh ?? last);
-	const stale = $derived(!fresh);
-
-	$effect(() => {
-		void loadSpotList();
-	});
-	$effect(() => {
-		if (query) void loadBoard(query);
-	});
-	$effect(() => {
-		if (theirQuery && fresh) void loadBoard(theirQuery);
-	});
-	$effect(() => {
-		if (fresh) last = fresh;
-	});
+	// The answer for this query, or the reason there is none; the heat map of their range is the
+	// same spot seen from the other side.
+	const answer = $derived(query ? attempt(() => boardEquity(query)) : undefined);
+	const result = $derived(answer?.value);
+	const theirGrid = $derived(
+		query ? attempt(() => boardEquity({ ...query, view: 'theirs' })).value?.unknown.grid : undefined
+	);
 
 	const pct = (v: number, digits = 1) => `${(v * 100).toFixed(digits)}%`;
 	const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v * 100).toFixed(1)}`;
@@ -235,7 +217,7 @@
 	</div>
 
 	<!-- What it shows -->
-	<div class="flex min-w-0 flex-col gap-5" class:opacity-60={stale && !!result} aria-busy={stale}>
+	<div class="flex min-w-0 flex-col gap-5">
 		{#if result}
 			<section aria-labelledby="unknown-title" class="flex flex-col gap-3">
 				<h3 id="unknown-title" class="text-sm font-bold tracking-wide text-slate-300 uppercase">
@@ -421,8 +403,8 @@
 				{/if}
 			</section>
 			<p class="text-xs text-slate-500">{result.note}</p>
-		{:else if rangeStore.error}
-			<p class="text-sm text-rose-300">{rangeStore.error}</p>
+		{:else if answer?.error}
+			<p class="text-sm text-rose-300">{answer.error}</p>
 		{:else}
 			<p class="text-sm text-slate-400">Loading…</p>
 		{/if}

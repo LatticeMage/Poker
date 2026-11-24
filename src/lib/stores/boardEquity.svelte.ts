@@ -55,37 +55,75 @@ function cleanSlots(size: number) {
 const cleanText = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
 
 class BoardEquityInputs {
-	/** Single-raised, 3-bet or 4-bet pot. */
-	pot = $state<Pot>(read('pot', (v) => POTS.find((p) => p === v), 'srp'));
-	/** The seat picked as opener. Whether a chart exists for it is decided where it is used. */
-	opener = $state(read('opener', cleanText, 'BTN'));
-	/** The seat picked as caller / 3-bettor. */
-	other = $state(read('other', cleanText, 'BB'));
-	/** Which of the two you are. */
-	side = $state<Side>(
+	// Each input is a signal with its own saved copy. The setter writes the signal and its key in the
+	// same step, so nothing has to watch the state to save it.
+	#pot = $state<Pot>(read('pot', (v) => POTS.find((p) => p === v), 'srp'));
+	#opener = $state(read('opener', cleanText, 'BTN'));
+	#other = $state(read('other', cleanText, 'BB'));
+	#side = $state<Side>(
 		read('side', (v) => (v === 'opener' || v === 'other' ? v : undefined), 'other')
 	);
-	/** A bet you face, as a fraction of the pot. */
-	bet = $state<number | null>(
+	#bet = $state<number | null>(
 		read('bet', (v) => (typeof v === 'number' && v > 0 ? v : undefined), null)
 	);
-	/** Flop 1-3, turn, river. */
-	board = $state<(Card | null)[]>(read('board', cleanSlots(BOARD_SLOTS), DEFAULT_BOARD));
-	/** Your two cards. */
-	hand = $state<(Card | null)[]>(read('hand', cleanSlots(HAND_SLOTS), [null, null]));
+	#board = $state<(Card | null)[]>(read('board', cleanSlots(BOARD_SLOTS), DEFAULT_BOARD));
+	#hand = $state<(Card | null)[]>(read('hand', cleanSlots(HAND_SLOTS), [null, null]));
 
-	constructor() {
-		if (!browser) return;
-		// One effect per input: saving one never reads or rewrites another.
-		$effect.root(() => {
-			$effect(() => write('pot', this.pot));
-			$effect(() => write('opener', this.opener));
-			$effect(() => write('other', this.other));
-			$effect(() => write('side', this.side));
-			$effect(() => write('bet', this.bet));
-			$effect(() => write('board', [...this.board]));
-			$effect(() => write('hand', [...this.hand]));
-		});
+	/** Single-raised, 3-bet or 4-bet pot. */
+	get pot() {
+		return this.#pot;
+	}
+	set pot(value: Pot) {
+		this.#pot = value;
+		write('pot', value);
+	}
+	/** The seat picked as opener. Whether a chart exists for it is decided where it is used. */
+	get opener() {
+		return this.#opener;
+	}
+	set opener(value: string) {
+		this.#opener = value;
+		write('opener', value);
+	}
+	/** The seat picked as caller / 3-bettor. */
+	get other() {
+		return this.#other;
+	}
+	set other(value: string) {
+		this.#other = value;
+		write('other', value);
+	}
+	/** Which of the two you are. */
+	get side() {
+		return this.#side;
+	}
+	set side(value: Side) {
+		this.#side = value;
+		write('side', value);
+	}
+	/** A bet you face, as a fraction of the pot. */
+	get bet() {
+		return this.#bet;
+	}
+	set bet(value: number | null) {
+		this.#bet = value;
+		write('bet', value);
+	}
+	/** Flop 1-3, turn, river. */
+	get board() {
+		return this.#board;
+	}
+	set board(value: (Card | null)[]) {
+		this.#board = value;
+		write('board', value);
+	}
+	/** Your two cards. */
+	get hand() {
+		return this.#hand;
+	}
+	set hand(value: (Card | null)[]) {
+		this.#hand = value;
+		write('hand', value);
 	}
 
 	// -- computed from the inputs: the only place where they are put together --------------------
@@ -118,8 +156,8 @@ class BoardEquityInputs {
 
 	/** Set one slot of the picker (0-4 board, 5-6 hand); null empties it. */
 	setSlot(index: number, card: Card | null) {
-		if (index < BOARD_SLOTS) this.board[index] = card;
-		else this.hand[index - BOARD_SLOTS] = card;
+		if (index < BOARD_SLOTS) this.board = this.board.map((c, i) => (i === index ? card : c));
+		else this.hand = this.hand.map((c, i) => (i === index - BOARD_SLOTS ? card : c));
 	}
 
 	/**

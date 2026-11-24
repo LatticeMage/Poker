@@ -26,10 +26,7 @@
 	const slots = $derived([...settings.pickedHole, ...settings.pickedBoard]);
 	const used = $derived(new Set(slots.filter((c) => c !== null)));
 
-	function put(slot: number, card: Card | null) {
-		if (slot < 2) settings.pickedHole[slot] = card;
-		else settings.pickedBoard[slot - 2] = card;
-	}
+	const put = (slot: number, card: Card | null) => settings.setPick(slot, card);
 
 	function choose(card: Card | null) {
 		put(cursor, card);

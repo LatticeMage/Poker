@@ -8,14 +8,14 @@
 
 <script lang="ts">
 	import {
-		headsUpStacks,
-		loadHeadsUp,
-		loadPushFold,
-		loadRangeChart,
-		loadSpot,
-		loadSpotList
-	} from '$lib/actions/ranges';
-	import { rangeStore, spotKey } from '$lib/stores/ranges.svelte';
+		HEADS_UP_STACKS as headsUpStacks,
+		attempt,
+		headsUpChart,
+		pushFoldChart,
+		rangeChart,
+		spotChart,
+		spotList as getSpotList
+	} from '$lib/poker/lookup';
 	import { settings } from '$lib/stores/settings.svelte';
 	import { handCombos, handTitle, percentiles, positionClass } from '$lib/utils/hands';
 	import HandGrid from './HandGrid.svelte';
@@ -29,7 +29,8 @@
 	let picked = $state<string | null>(null);
 
 	// Opening view.
-	const chart = $derived(rangeStore.charts[players]);
+	const chartResult = $derived(attempt(() => rangeChart(players)));
+	const chart = $derived(chartResult.value);
 	// The chosen seat by name, kept when the table size changes if the seat still exists; the big
 	// blind never opens, so a missing or blind seat falls back to the first seat.
 	const seat = $derived.by(() => {
@@ -41,7 +42,8 @@
 
 	// The situation for the chosen seat: first in, facing an open, or opened and then 3-bet.
 	let facing = $state('first');
-	const spotList = $derived(rangeStore.spotList);
+	const spotListResult = $derived(attempt(getSpotList));
+	const spotList = $derived(spotListResult.value);
 	const hero = $derived(seat ? positionClass(seat.behind, seat.behind === players - 1) : '');
 	const situations = $derived.by(() => {
 		const out: {
@@ -63,9 +65,10 @@
 	});
 	const situation = $derived(situations.find((x) => x.id === facing) ?? situations[0]);
 	const villain = $derived(situation?.villain ?? '');
-	const spot = $derived(
-		situation?.kind ? rangeStore.spots[spotKey(situation.kind, hero, villain)] : undefined
+	const spotResult = $derived(
+		situation?.kind ? attempt(() => spotChart(situation.kind!, hero, villain)) : undefined
 	);
+	const spot = $derived(spotResult?.value);
 	/** Per hand: [raise for value, raise as a bluff, call] shares. */
 	const spotMix = $derived.by(() => {
 		if (!spot) return undefined;
@@ -84,7 +87,10 @@
 	let duelStack = $state(20);
 	let duelPlayer = $state<'SB' | 'BB'>('SB');
 	let duelNode = $state('root');
-	const duel = $derived(rangeStore.headsUp[duelStack]);
+	const duelResult = $derived(
+		mode === 'headsup' ? attempt(() => headsUpChart(duelStack)) : undefined
+	);
+	const duel = $derived(duelResult?.value);
 	const duelNodes = $derived(
 		duel
 			? Object.entries(duel.nodes)
@@ -128,10 +134,14 @@
 	// Short-stack view.
 	let stack = $state(10);
 	let side = $state<'push' | 'call'>('push');
-	const pushFold = $derived(rangeStore.pushFold[stack]);
+	const pushFoldResult = $derived(
+		mode === 'pushfold' ? attempt(() => pushFoldChart(stack)) : undefined
+	);
+	const pushFold = $derived(pushFoldResult?.value);
 
 	// Strength data comes with any opening chart (it does not depend on the table size).
-	const base = $derived(mode === 'open' ? chart : rangeStore.charts[2]);
+	const baseResult = $derived(mode === 'open' ? chartResult : attempt(() => rangeChart(2)));
+	const base = $derived(baseResult.value);
 	const percentile = $derived(base ? percentiles(base.order) : {});
 
 	const shown = $derived(
@@ -159,20 +169,14 @@
 	});
 	const verb = $derived(mode === 'open' ? 'raise' : side === 'push' ? 'shove' : 'call');
 
-	$effect(() => {
-		if (mode === 'open') {
-			void loadRangeChart(players);
-			void loadSpotList();
-			if (situation?.kind) void loadSpot(situation.kind, hero, villain);
-			return;
-		}
-		void loadRangeChart(2);
-		if (mode === 'headsup') {
-			void loadHeadsUp(duelStack);
-		} else if (mode === 'pushfold') {
-			void loadPushFold(stack);
-		}
-	});
+	// Whatever the shown view could not get: the reason, in place of its chart.
+	const problem = $derived(
+		(mode === 'open'
+			? (chartResult.error ?? spotListResult.error ?? spotResult?.error)
+			: mode === 'headsup'
+				? duelResult?.error
+				: pushFoldResult?.error) ?? baseResult.error
+	);
 
 	const sourceText = $derived(
 		!seat
@@ -379,8 +383,8 @@
 					{/if}
 				{/if}
 			{/if}
-		{:else if rangeStore.error}
-			<p class="text-sm text-rose-300">{rangeStore.error}</p>
+		{:else if problem}
+			<p class="text-sm text-rose-300">{problem}</p>
 		{:else}
 			<p class="text-sm text-slate-400">Loading…</p>
 		{/if}
@@ -464,8 +468,8 @@
 				realisation of equity after the flop (the small blind is in position). Not a full postflop
 				solve. Exploitability of this model: {duel.exploitability_bb.toFixed(3)} bb.
 			</p>
-		{:else if rangeStore.error}
-			<p class="text-sm text-rose-300">{rangeStore.error}</p>
+		{:else if problem}
+			<p class="text-sm text-rose-300">{problem}</p>
 		{:else}
 			<p class="text-sm text-slate-400">Loading…</p>
 		{/if}
@@ -526,8 +530,8 @@
 				</span>
 			</div>
 			<p class="rounded-md bg-slate-800 px-2 py-1 text-xs text-slate-300">{pushFold.note}</p>
-		{:else if rangeStore.error}
-			<p class="text-sm text-rose-300">{rangeStore.error}</p>
+		{:else if problem}
+			<p class="text-sm text-rose-300">{problem}</p>
 		{:else}
 			<p class="text-sm text-slate-400">Loading…</p>
 		{/if}

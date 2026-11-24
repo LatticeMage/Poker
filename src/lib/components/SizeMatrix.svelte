@@ -3,8 +3,7 @@
 -->
 
 <script lang="ts">
-	import { loadRangeChart } from '$lib/actions/ranges';
-	import { rangeStore } from '$lib/stores/ranges.svelte';
+	import { attempt, rangeChart } from '$lib/poker/lookup';
 
 	let {
 		players,
@@ -16,12 +15,10 @@
 	const SIZES = [2, 3, 4, 5, 6, 7, 8, 9];
 	const SEATS = ['UTG', 'UTG+1', 'UTG+2', 'LJ', 'HJ', 'CO', 'BTN', 'SB', 'SB/BTN'];
 
-	$effect(() => {
-		for (const n of SIZES) void loadRangeChart(n);
-	});
-
 	function pct(n: number, name: string): number | null {
-		const seat = rangeStore.charts[n]?.seats.find((s) => s.name === name && s.source !== 'none');
+		const seat = attempt(() => rangeChart(n)).value?.seats.find(
+			(s) => s.name === name && s.source !== 'none'
+		);
 		return seat ? seat.pct : null;
 	}
 

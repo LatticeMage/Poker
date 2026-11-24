@@ -2,8 +2,7 @@
 
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { onMount } from 'svelte';
-	import { act, nextHand, resumeGame, retry, startGame } from '$lib/actions/games';
+	import { act, nextHand, retry, startGame } from '$lib/actions/games';
 	import BetControls from '$lib/components/BetControls.svelte';
 	import CardPicker from '$lib/components/CardPicker.svelte';
 	import ChartHint from '$lib/components/ChartHint.svelte';
@@ -12,16 +11,7 @@
 	import PokerTable from '$lib/components/PokerTable.svelte';
 	import RangeChart from '$lib/components/RangeChart.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
-	import {
-		awaitingNext,
-		error,
-		game,
-		hero,
-		heroOut,
-		legal,
-		log,
-		replaying
-	} from '$lib/stores/game.store';
+	import { table } from '$lib/stores/game.svelte';
 	import { settings } from '$lib/stores/settings.svelte';
 
 	let showSettings = $state(false);
@@ -29,12 +19,18 @@
 	let showLog = $state(false);
 	let showCharts = $state(false);
 
-	const actor = $derived($game && $game.to_act >= 0 ? $game.players[$game.to_act] : null);
+	const actor = $derived(
+		table.game && table.game.to_act >= 0 ? table.game.players[table.game.to_act] : null
+	);
 	const champion = $derived(
-		$game?.phase === 'game_over' ? ($game.players.find((p) => p.place === 1) ?? null) : null
+		table.game?.phase === 'game_over'
+			? (table.game.players.find((p) => p.place === 1) ?? null)
+			: null
 	);
 	const handsToNextLevel = $derived(
-		$game ? $game.hands_per_level - (($game.hand_number - 1) % $game.hands_per_level) : 0
+		table.game
+			? table.game.hands_per_level - ((table.game.hand_number - 1) % table.game.hands_per_level)
+			: 0
 	);
 
 	function ordinal(n: number): string {
@@ -43,15 +39,12 @@
 	}
 
 	function newGame() {
-		const inProgress = $game && $game.phase !== 'game_over' && !$heroOut && !$error;
+		const inProgress =
+			table.game && table.game.phase !== 'game_over' && !table.heroOut && !table.error;
 		if (inProgress && !confirm('Abandon this game and start a new one?')) return;
 		showSettings = false;
 		void startGame();
 	}
-
-	onMount(() => {
-		void resumeGame();
-	});
 </script>
 
 <div class="flex h-dvh flex-col overflow-hidden">
@@ -61,17 +54,17 @@
 		<h1 class="text-base font-black tracking-tight whitespace-nowrap sm:text-lg">
 			<span class="text-amber-400">♠</span><span class="max-[420px]:sr-only"> Robo Hold'em</span>
 		</h1>
-		{#if $game && $game.hand_number > 0}
+		{#if table.game && table.game.hand_number > 0}
 			<div
 				class="order-last min-w-0 basis-full truncate text-xs text-slate-400 tabular-nums sm:order-none sm:basis-auto sm:text-sm"
 			>
-				Hand {$game.hand_number}
+				Hand {table.game.hand_number}
 				<span class="mx-1 text-slate-600">·</span>
-				Blinds {$game.small_blind}/{$game.big_blind}
-				{#if $game.next_big_blind > $game.big_blind && $game.phase !== 'game_over'}
+				Blinds {table.game.small_blind}/{table.game.big_blind}
+				{#if table.game.next_big_blind > table.game.big_blind && table.game.phase !== 'game_over'}
 					<span class="hidden md:inline">
 						<span class="mx-1 text-slate-600">·</span>
-						{$game.next_big_blind / 2}/{$game.next_big_blind} in {handsToNextLevel}
+						{table.game.next_big_blind / 2}/{table.game.next_big_blind} in {handsToNextLevel}
 						{handsToNextLevel === 1 ? 'hand' : 'hands'}
 					</span>
 				{/if}
@@ -98,8 +91,8 @@
 	<div class="flex min-h-0 flex-1">
 		<main class="flex min-w-0 flex-1 flex-col">
 			<div class="min-h-0 flex-1 p-2 sm:p-3">
-				{#if $game}
-					<PokerTable game={$game} />
+				{#if table.game}
+					<PokerTable game={table.game} />
 				{/if}
 			</div>
 
@@ -107,8 +100,8 @@
 				class="flex min-h-[8.5rem] shrink-0 flex-col items-center justify-center gap-2 border-t border-slate-800 bg-slate-950/60 px-3 py-3"
 				aria-live="polite"
 			>
-				{#if $error}
-					<p class="text-sm font-semibold text-rose-300">{$error}</p>
+				{#if table.error}
+					<p class="text-sm font-semibold text-rose-300">{table.error}</p>
 					<div class="flex gap-2">
 						{#if !false}
 							<button
@@ -125,39 +118,40 @@
 							New game
 						</button>
 					</div>
-				{:else if !$game}
+				{:else if !table.game}
 					<p class="text-sm text-slate-400">Shuffling up…</p>
-				{:else if $game.phase === 'game_over' && !$replaying}
+				{:else if table.game.phase === 'game_over' && !table.replaying}
 					<p class="text-center text-lg font-bold">
 						{#if champion?.is_human}
 							🏆 You won the game!
 						{:else}
-							{champion?.name} wins the $game.
-							{#if $hero?.place}You finished {ordinal($hero.place)} of {$game.players.length}.{/if}
+							{champion?.name} wins the table.game.
+							{#if table.hero?.place}You finished {ordinal(table.hero.place)} of {table.game.players
+									.length}.{/if}
 						{/if}
 					</p>
 					<button class="main-btn bg-amber-600 text-amber-950 hover:bg-amber-500" onclick={newGame}>
 						Play again
 					</button>
-				{:else if $legal}
-					{#if $hero?.hand_name}
+				{:else if table.legal}
+					{#if table.hero?.hand_name}
 						<p class="text-xs text-slate-400">
-							You have <span class="font-semibold text-slate-200">{$hero.hand_name}</span>
+							You have <span class="font-semibold text-slate-200">{table.hero.hand_name}</span>
 						</p>
 					{/if}
 					{#if settings.hints}
 						<ChartHint />
 					{/if}
-					{#key $legal}
-						<BetControls legal={$legal} smallBlind={$game.small_blind} onact={act} />
+					{#key table.legal}
+						<BetControls legal={table.legal} smallBlind={table.game.small_blind} onact={act} />
 					{/key}
-				{:else if $awaitingNext}
+				{:else if table.awaitingNext}
 					<p class="text-center text-sm font-semibold text-amber-300 sm:text-base">
-						{$game.headline}
+						{table.game.headline}
 					</p>
-					{#if $heroOut && $hero?.place}
+					{#if table.heroOut && table.hero?.place}
 						<p class="text-xs text-slate-400">
-							You finished {ordinal($hero.place)} — the robots are playing it out.
+							You finished {ordinal(table.hero.place)} — the robots are playing it out.
 						</p>
 					{/if}
 					<div class="flex gap-2">
@@ -167,7 +161,7 @@
 						>
 							{settings.autoDeal ? 'Deal now' : 'Next hand'}
 						</button>
-						{#if $heroOut}
+						{#if table.heroOut}
 							<button
 								class="main-btn bg-amber-600 text-amber-950 hover:bg-amber-500"
 								onclick={newGame}
@@ -180,15 +174,15 @@
 					<p class="text-sm text-slate-400">
 						{#if actor && !actor.is_human}
 							{actor.name} is thinking…
-						{:else if $heroOut}
+						{:else if table.heroOut}
 							Watching the robots play it out…
 						{:else}
 							Dealing…
 						{/if}
 					</p>
-					{#if $hero?.hand_name && $hero.in_hand && !$hero.folded}
+					{#if table.hero?.hand_name && table.hero.in_hand && !table.hero.folded}
 						<p class="text-xs text-slate-400">
-							You have <span class="font-semibold text-slate-200">{$hero.hand_name}</span>
+							You have <span class="font-semibold text-slate-200">{table.hero.hand_name}</span>
 						</p>
 					{/if}
 				{/if}
@@ -201,13 +195,13 @@
 			>
 				Hand history
 			</h2>
-			<div class="min-h-0 flex-1"><GameLog lines={$log} /></div>
+			<div class="min-h-0 flex-1"><GameLog lines={table.log} /></div>
 		</aside>
 	</div>
 </div>
 
 <Modal bind:open={showSettings} title="Settings">
-	<SettingsPanel game={$game} onnewgame={newGame} />
+	<SettingsPanel game={table.game} onnewgame={newGame} />
 </Modal>
 
 <Modal bind:open={showPicker} title="Pick cards">
@@ -219,7 +213,7 @@
 </Modal>
 
 <Modal bind:open={showLog} title="Hand history">
-	<div class="h-[60dvh]"><GameLog lines={$log} /></div>
+	<div class="h-[60dvh]"><GameLog lines={table.log} /></div>
 </Modal>
 
 <style>

@@ -9,21 +9,19 @@
 		children
 	}: { open: boolean; title: string; children: Snippet } = $props();
 
-	let dialog: HTMLDialogElement | undefined = $state();
-
-	$effect(() => {
-		if (!dialog) return;
+	// The dialog follows `open`: an attachment runs when the element appears and again when `open` changes.
+	function follow(dialog: HTMLDialogElement) {
 		if (open && !dialog.open) dialog.showModal();
 		else if (!open && dialog.open) dialog.close();
-	});
+	}
 </script>
 
 <dialog
-	bind:this={dialog}
+	{@attach follow}
 	class="m-auto w-[min(34rem,calc(100vw-1.5rem))] rounded-2xl border border-slate-700 bg-slate-900 p-0 text-slate-100 shadow-2xl backdrop:bg-black/60"
 	onclose={() => (open = false)}
 	onclick={(event) => {
-		if (event.target === dialog) open = false;
+		if (event.target === event.currentTarget) open = false;
 	}}
 >
 	{#if open}

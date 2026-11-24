@@ -10,15 +10,8 @@ import type { Card } from './cards';
 import { type Game, legalActions } from './engine';
 import { handScore } from './evaluate';
 import * as postflop from './postflop';
-import {
-	adjust,
-	chenValue,
-	handOf,
-	percentile,
-	pushfold,
-	roundHalfEven,
-	seatRange
-} from './ranges';
+import * as mixed from './mixed';
+import { chenValue, handOf, percentile, roundHalfEven, seatRange } from './ranges';
 import { type Rng, sample } from './rng';
 import * as spots from './spots';
 
@@ -141,20 +134,26 @@ function preflop(g: Game, legal: Legal, persona: Persona, rng: Rng, hole: readon
 
 	// How wide this persona plays (tight < 1 < loose), and where the hand ranks (top X% of 169
 	// hands). A little noise keeps hands at the edge of a range mixed.
-	const width = 1 + (0.5 - persona.tight) * 0.6;
+	const width = mixed.widthOf(persona.tight);
 	const rank = percentile(name) + (rng() - 0.5) * 2;
 
 	const stackBb = legal.stack_to / bb;
 	const raised = g.current_bet > bb;
 
-	// Heads-up and short: play the computed push/fold equilibrium (ranges.pushfold).
-	if (players === 2 && stackBb <= 10) {
+	// Heads-up: play the solved game, sampling each hand's mixed frequencies. Deep enough, that is the
+	// solved preflop tree at the nearest depth; shallower, the push/fold equilibrium (see mixed.ts).
+	if (players === 2) {
 		const opponent = g.players.find((o) => o !== me && o.in_hand && !o.folded)!;
-		const table = pushfold(Math.min(legal.stack_to, opponent.bet + opponent.chips) / bb);
-		if (table) {
-			if (raised) return table.call.has(name) ? call() : passive(legal); // the big blind facing a shove
+		const effective = Math.min(legal.stack_to, opponent.bet + opponent.chips) / bb;
+		if (effective >= mixed.TREE_MIN_BB) {
+			const choice = mixed.headsUpChoice(g, legal.seat, name, effective, width, rng);
+			if (choice) return fromChoice(g, legal, choice);
+		} else if (effective >= 2) {
+			if (raised)
+				return rng() < (mixed.pushFoldFreq(effective, 'call')[name] ?? 0) ? call() : passive(legal); // the big blind facing a shove
 			if (behind === 1) {
-				return table.push.has(name) && legal.can_raise ? jam(legal) : passive(legal); // the small blind acts first
+				const shove = rng() < (mixed.pushFoldFreq(effective, 'push')[name] ?? 0);
+				return shove && legal.can_raise ? jam(legal) : passive(legal); // the small blind acts first
 			}
 			return check(); // the big blind, nobody raised
 		}
@@ -179,16 +178,17 @@ function preflop(g: Game, legal: Legal, persona: Persona, rng: Rng, hole: readon
 			if (limpers && rank <= 14 * width) return raiseTo(g, legal, bb * (3 + limpers));
 			return check();
 		}
-		const chart = seatRange(players, index);
-		const inRange = adjust(chart.hands, chart.pct * width).has(name);
+		// The chart's frequency for this hand, stretched by the persona (see mixed.ts). Raising to
+		// isolate limpers uses a narrower slice of the same range.
+		const play = mixed.scaledOpenFreq(players, index, width)[name] ?? 0;
+		const u = rng();
 		if (limpers) {
-			if (adjust(chart.hands, chart.pct * width * 0.7).has(name)) {
-				return raiseTo(g, legal, bb * (3 + limpers)); // isolate the limpers
-			}
-			if (inRange || (behind === 1 && legal.to_call <= bb / 2 && rank <= 45)) return call();
+			const isolate = mixed.scaledOpenFreq(players, index, width * 0.7)[name] ?? 0;
+			if (u < isolate) return raiseTo(g, legal, bb * (3 + limpers));
+			if (u < play || (behind === 1 && legal.to_call <= bb / 2 && rank <= 45)) return call();
 			return passive(legal);
 		}
-		if (inRange) {
+		if (u < play) {
 			// The small blind plays out of position, so it opens bigger.
 			return raiseTo(g, legal, bb * ((behind === 1 ? 3.0 : 2.5) + rng() * 0.5));
 		}
@@ -199,6 +199,23 @@ function preflop(g: Game, legal: Legal, persona: Persona, rng: Rng, hole: readon
 	const plan = facingRaise(g, legal, persona, rng, order, name, rank, width);
 	if (plan) return plan;
 	return facingHeuristic(g, legal, persona, rng, order, index, behind, name, rank, width);
+}
+
+/** Turn a solved heads-up choice into a legal action. */
+function fromChoice(g: Game, legal: Legal, choice: mixed.Choice): Action {
+	switch (choice.kind) {
+		case 'raise':
+			return raiseTo(g, legal, choice.to_bb * g.big_blind);
+		case 'allin':
+			return legal.can_raise ? jam(legal) : flat(legal);
+		case 'call':
+		case 'limp':
+			return flat(legal);
+		case 'check':
+			return check();
+		default:
+			return passive(legal);
+	}
 }
 
 /** Sample an action from [action, probability] pairs; the rest of the probability is 'fold'. */
@@ -246,18 +263,23 @@ function facingRaise(
 		const openerClass = asOpener(opener);
 		const spot = spots.vsOpen(asFacing(me), openerClass);
 		if (!spot) return null;
-		let callShare = spot.call[name] ?? 0;
 		let bluff = spot.bluff3[name] ?? 0;
 		const value = spot.value3[name] ?? 0;
 		// Approximations on top of the charts: style, open size (minimum defence frequency), callers
 		// already in, and a shallower stack.
-		callShare = Math.min(1, callShare * width * spots.sizeFactor(openerClass, sizeBb));
+		const raises = mixed.sum(spot.value3, spot.bluff3);
+		let callShare =
+			mixed.scaledCalls(
+				spot,
+				spot.call,
+				raises,
+				width * spots.sizeFactor(openerClass, sizeBb) * (stackBb < 40 ? 0.75 : 1)
+			)[name] ?? 0;
 		bluff *= 0.5 + persona.aggro;
 		const callers = g.players.filter(
 			(o) => o.seat !== me && o.seat !== opener && o.in_hand && !o.folded && o.bet >= g.current_bet
 		).length;
 		if (callers) bluff *= 0.25;
-		if (stackBb < 40) callShare *= 0.75;
 		if (stackBb < 25) bluff = 0;
 		bluff = Math.min(bluff, 1 - value);
 		callShare = Math.max(0, Math.min(callShare, 1 - value - bluff));
@@ -282,7 +304,8 @@ function facingRaise(
 	if (raisers.length === 2 && raisers[0] === me) {
 		const spot = spots.vs3bet(asOpener(me), asFacing(raisers[1]));
 		if (!spot) return null;
-		let callShare = Math.min(1, (spot.call[name] ?? 0) * width);
+		let callShare =
+			mixed.scaledCalls(spot, spot.call, mixed.sum(spot.value4, spot.bluff4), width)[name] ?? 0;
 		const four = (spot.bluff4[name] ?? 0) + (spot.value4[name] ?? 0);
 		callShare = Math.max(0, Math.min(callShare, 1 - four));
 		switch (

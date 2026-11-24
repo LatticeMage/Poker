@@ -100,6 +100,55 @@ int main() {
 		check(distinct.size() == 184, "the 184 group names are different");
 	}
 
+	// wetness is a result, not a category: no group name contains it, and it behaves as it should
+	{
+		// rainbow, far apart ranks: dry. monotone and tight: the wettest. paired with a flush draw and tight ranks: wet.
+		const Flop* dry = nullptr;
+		for (const Flop& x : f) {
+			const int r0 = x.cards[0] >> 2, r1 = x.cards[1] >> 2, r2 = x.cards[2] >> 2;
+			if (!dry && x.suit_kind == 0 && r2 == 11 && r1 == 5 && r0 == 0) dry = &x;  // ranks K, 7, 2 in three suits
+		}
+		const Flop* wettest = nullptr;
+		const Flop* paired_wet = nullptr;
+		for (const Flop& x : f) {
+			if (!wettest && x.suit_kind == 2 && flop_span_ace_low(x) <= 2 && !x.paired) wettest = &x;
+			if (!paired_wet && x.paired && !x.trips && x.suit_kind == 1 && flop_wetness(x) >= 3) paired_wet = &x;
+		}
+		bool names_clean = true;
+		for (int depth = 1; depth <= 6; depth++)
+			for (const Flop& x : f) names_clean = names_clean && flop_group_name(x, depth).find("乾") == std::string::npos &&
+			                                  flop_group_name(x, depth).find("濕") == std::string::npos;
+		check(names_clean, "no group name carries dry or wet: they are results, not categories");
+		check(dry && flop_wetness(*dry) == 0, "K-7-2 rainbow is dry (wetness 0)");
+		check(wettest && flop_wetness(*wettest) == 4, "a tight monotone board is the wettest (wetness 4)");
+		check(paired_wet != nullptr, "a paired board with a flush draw and a tight straight structure is wet (>= 3)");
+		int wc[5] = {0, 0, 0, 0, 0};
+		for (const Flop& x : f) wc[flop_wetness(x)] += x.weight;
+		check(wc[0] > 0 && wc[4] > 0 && wc[0] + wc[1] + wc[2] + wc[3] + wc[4] == 22100, "all five wetness levels occur and cover the 22,100 flops");
+		printf("  (flops by wetness: dry %d, fairly dry %d, medium %d, wet %d, very wet %d)\n", wc[0], wc[1], wc[2], wc[3], wc[4]);
+	}
+
+	// the dry-wet spectrum of the 184 (or 182) groups: a result placed on the groups after the classification
+	{
+		FlopTaxonomy t = flop_taxonomy(182);
+		double lo = 99, hi = -1;
+		bool in_range = t.wetness.size() == t.name.size();
+		for (double w : t.wetness) { lo = std::min(lo, w); hi = std::max(hi, w); in_range = in_range && w >= 0 && w <= 4; }
+		check(in_range && lo < 0.5 && hi > 3.0, "the groups spread over the dry-wet spectrum (driest below 0.5, wettest above 3)");
+		// a rainbow group with far-apart ranks is drier than a monotone group with tight ranks
+		double rb = -1, mono = -1;
+		for (size_t g = 0; g < t.name.size(); g++) {
+			if (t.name[g].find("彩虹") != std::string::npos && t.name[g].find("順遠") != std::string::npos) rb = std::max(rb, t.wetness[g]);
+			if (t.name[g].find("單色") != std::string::npos && t.name[g].find("順緊") != std::string::npos) mono = std::max(mono, t.wetness[g]);
+		}
+		check(rb >= 0 && mono >= 0 && rb < 1.0 && mono > 3.0, "rainbow far-apart groups sit at the dry end (< 1), monotone tight groups at the wet end (> 3)");
+		// a group's wetness is the weighted mean of its members': the weighted mean over all groups equals the mean over all flops
+		double lhs = 0, rhs = 0;
+		for (size_t g = 0; g < t.name.size(); g++) lhs += t.wetness[g] * t.rep[g].weight;
+		for (const Flop& x : f) rhs += (double)x.weight * flop_wetness(x);
+		check(std::fabs(lhs - rhs) < 1e-6 * 22100, "the groups' wetness averages back to the mean wetness of all flops");
+	}
+
 	// the representatives really are distinct classes
 	std::set<std::tuple<int, int, int>> seen;
 	bool distinct = true;

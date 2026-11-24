@@ -6,7 +6,8 @@
 //   ./flops taxonomy 184 > data/flops-taxonomy-184.csv  the same with NAMED groups (broadway count, pairing, suits, ...)
 //
 // Columns of list: index, flop, weight, suits (rainbow / two-tone / mono), pairing (unpaired / paired / trips),
-// broadway (cards T J Q K A), high (rank of the highest card), span (highest - lowest rank, ace also low).
+// broadway (cards T J Q K A), high (rank of the highest card), span (highest - lowest rank, ace also low), wetness
+// (a result of the suits and the straight structure: 乾 / 偏乾 / 中 / 濕 / 很濕; not used for grouping).
 #include "flops.cuh"
 
 #include <algorithm>
@@ -22,10 +23,10 @@ static const char* pairing(const Flop& f) { return f.trips ? "trips" : (f.paired
 int main(int argc, char** argv) {
 	const std::vector<Flop>& all = all_flops();
 	if (argc >= 2 && strcmp(argv[1], "list") == 0) {
-		printf("index,flop,weight,suits,pairing,broadway,high,span\n");
+		printf("index,flop,weight,suits,pairing,broadway,high,span,wetness\n");
 		for (const Flop& f : all)
-			printf("%d,%s,%d,%s,%s,%d,%c,%d\n", f.index, flop_name(f).c_str(), f.weight, SUIT_KIND[f.suit_kind], pairing(f),
-			       flop_broadway(f), RANKS[f.high], flop_span_ace_low(f));
+			printf("%d,%s,%d,%s,%s,%d,%c,%d,%s\n", f.index, flop_name(f).c_str(), f.weight, SUIT_KIND[f.suit_kind], pairing(f),
+			       flop_broadway(f), RANKS[f.high], flop_span_ace_low(f), flop_wetness_name(flop_wetness(f)));
 		return 0;
 	}
 	if (argc >= 3 && strcmp(argv[1], "partition") == 0) {
@@ -62,18 +63,32 @@ int main(int argc, char** argv) {
 		printf("%5s  %6zu  %16d  %17d  %13d  %11d   (refined to 184)\n", "184", t.name.size(), big, small, tc, tw);
 		return 0;
 	}
+	if (argc >= 3 && strcmp(argv[1], "spectrum") == 0) {
+		// the groups from driest to wettest: the dry-wet spectrum
+		FlopTaxonomy t = flop_taxonomy(atoi(argv[2]));
+		std::vector<int> size(t.name.size(), 0), order(t.name.size());
+		for (size_t i = 0; i < all.size(); i++) size[t.group_of[i]]++;
+		for (size_t g = 0; g < order.size(); g++) order[g] = (int)g;
+		std::sort(order.begin(), order.end(), [&](int a, int b) { return t.wetness[a] != t.wetness[b] ? t.wetness[a] < t.wetness[b] : a < b; });
+		printf("rank,wetness,flops,classes,group\n");
+		for (size_t r = 0; r < order.size(); r++) {
+			const int g = order[r];
+			printf("%zu,%.3f,%d,%d,%s\n", r + 1, t.wetness[g], t.rep[g].weight, size[g], t.name[g].c_str());
+		}
+		return 0;
+	}
 	if (argc >= 3 && strcmp(argv[1], "taxonomy") == 0) {
 		FlopTaxonomy t = flop_taxonomy(atoi(argv[2]));
-		printf("index,flop,weight,group,group_name,group_flop,group_weight,group_classes\n");
+		printf("index,flop,weight,group,group_name,group_flop,group_weight,group_classes,wetness,group_wetness\n");
 		std::vector<int> size(t.name.size(), 0);
 		for (size_t i = 0; i < all.size(); i++) size[t.group_of[i]]++;
 		for (size_t i = 0; i < all.size(); i++) {
 			const int g = t.group_of[i];
-			printf("%d,%s,%d,%d,%s,%s,%d,%d\n", all[i].index, flop_name(all[i]).c_str(), all[i].weight, g, t.name[g].c_str(),
-			       flop_name(t.rep[g]).c_str(), t.rep[g].weight, size[g]);
+			printf("%d,%s,%d,%d,%s,%s,%d,%d,%s,%.3f\n", all[i].index, flop_name(all[i]).c_str(), all[i].weight, g, t.name[g].c_str(),
+			       flop_name(t.rep[g]).c_str(), t.rep[g].weight, size[g], flop_wetness_name(flop_wetness(all[i])), t.wetness[g]);
 		}
 		return 0;
 	}
-	fprintf(stderr, "usage: flops list | flops partition <k> | flops taxonomy <k> | flops levels\n");
+	fprintf(stderr, "usage: flops list | flops partition <k> | flops taxonomy <k> | flops spectrum <k> | flops levels\n");
 	return 1;
 }

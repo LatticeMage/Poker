@@ -43,10 +43,15 @@ struct GNode {
 	std::vector<uint8_t> path;  // action index taken at each step from the root
 	double c0 = 0, c1 = 0;      // fold: what player 0 / 1 has put in; showdown: c0 = what each has put in
 	bool allin = false;         // showdown: both all-in (raw equity), else realised equity
+	// Showdown that is not all-in: the kind of pot, for the realisation table (solve_realization.cuh).
+	// 0 = limped (no data in the table), 1 = single-raised, 2 = 3-bet, 3 = 4-bet (or more, short of all-in).
+	int pot = 0;
+	int mset = -1;              // showdown: which matrix set values it (-1: raw if all-in, else the formula)
 };
 
 struct GameTree {
 	std::vector<GNode> nodes;  // nodes[0] is the root decision; a parent always comes before its children
+	double stack = 0;          // effective stack in bb
 	int add(const GNode& n) { nodes.push_back(n); return (int)nodes.size() - 1; }
 };
 
@@ -62,7 +67,7 @@ static std::string num(double x) {
 typedef std::vector<std::vector<double> > Levels;
 
 static int build_facing(GameTree& t, const std::string& id, std::vector<uint8_t> path, int p, double own,
-                        double bet, const Levels& levels, size_t from, double stack) {
+                        double bet, const Levels& levels, size_t from, double stack, bool limped = false) {
 	const int d = t.add(GNode());
 	t.nodes[d].id = id;
 	t.nodes[d].player = p;
@@ -76,6 +81,7 @@ static int build_facing(GameTree& t, const std::string& id, std::vector<uint8_t>
 	s.kind = SHOW;
 	s.c0 = bet;
 	s.allin = bet >= stack;
+	s.pot = limped ? 0 : (int)std::min<size_t>(from, 3);  // `from` = raises so far (the open is the first)
 	std::vector<std::string> labels = {"fold", "call"};
 	std::vector<int> child = {t.add(f), t.add(s)};
 	if (bet < stack) {
@@ -89,7 +95,7 @@ static int build_facing(GameTree& t, const std::string& id, std::vector<uint8_t>
 			std::vector<uint8_t> np = path;
 			np.push_back((uint8_t)labels.size() - 1);
 			const int c = build_facing(t, id + "/" + (to >= stack ? "allin" : num(to)), np, 1 - p, bet, to,
-			                           levels, from + 1, stack);
+			                           levels, from + 1, stack, limped);
 			child.push_back(c);
 		}
 	}
@@ -100,6 +106,7 @@ static int build_facing(GameTree& t, const std::string& id, std::vector<uint8_t>
 
 static GameTree build_ladder_tree(double stack, const Levels& open_levels, const Levels& limp_levels) {
 	GameTree t;
+	t.stack = stack;
 	const int root = t.add(GNode());
 	t.nodes[root].id = "root";
 	t.nodes[root].player = 0;
@@ -118,6 +125,7 @@ static GameTree build_ladder_tree(double stack, const Levels& open_levels, const
 		GNode s;
 		s.kind = SHOW;
 		s.c0 = 1;
+		s.pot = 0;  // limped pot
 		std::vector<std::string> bl = {"check"};
 		std::vector<int> bc = {t.add(s)};
 		std::set<double> sizes;
@@ -127,7 +135,7 @@ static GameTree build_ladder_tree(double stack, const Levels& open_levels, const
 		for (double to : sizes) {
 			bl.push_back(to >= stack ? "allin" : "raise " + num(to));
 			const int c = build_facing(t, "limp/" + (to >= stack ? std::string("allin") : num(to)), {1, (uint8_t)(bl.size() - 1)}, 0, 1,
-			                           to, limp_levels, 1, stack);
+			                           to, limp_levels, 1, stack, true);
 			bc.push_back(c);
 		}
 		t.nodes[limp].labels = bl;
@@ -170,6 +178,11 @@ static int build_mult_node(GameTree& t, std::vector<uint8_t> path, int p, double
 	s.kind = SHOW;
 	s.c0 = cur;
 	s.allin = cur >= stack;
+	{  // pot kind: path[0] == 1 is a limp; every later action >= 2 is a raise
+		int raises = 0;
+		for (uint8_t a : path) raises += a >= 2;
+		s.pot = !path.empty() && path[0] == 1 ? 0 : std::min(raises, 3);
+	}
 	const bool limp = path.size() == 1 && path[0] == 1;
 	std::vector<std::string> labels = {"fold", limp ? "check" : "call"};
 	std::vector<int> child = {t.add(f), -1};
@@ -193,6 +206,7 @@ static int build_mult_node(GameTree& t, std::vector<uint8_t> path, int p, double
 
 static GameTree build_mult_tree(double stack) {
 	GameTree t;
+	t.stack = stack;
 	build_mult_node(t, {}, 0, 0.5, 1.0, stack);
 	return t;
 }
@@ -204,6 +218,9 @@ struct Problem {
 	int n = 0;
 	std::vector<double> W;
 	std::vector<double> M[2][2];
+	// More matrix sets for showdowns (set 2 + k = extra[2k], extra[2k + 1] for the small / big blind), built by
+	// solve_realization.cuh from the realisation table. Sets 0 and 1 are M[0] (raw) and M[1] (the formula).
+	std::vector<std::vector<double> > extra;
 	std::vector<double> prior;  // share of all combos, sums to 1
 	std::vector<double> wsum;   // row sums of W
 };
@@ -264,11 +281,13 @@ struct DevNode {
 	int kind, player, nact, aoff;  // aoff: first of this decision's per-action vectors in sigma/regret/sum
 	int child[MAXA];
 	int allin;
+	int mset;  // showdown: matrix set (see Problem::extra)
 	double c0, c1;
 };
 
 struct Mats {
-	const double *W, *M[2][2];  // transposed, padded: [j * NP + i]
+	const double* W;                 // transposed, padded: [j * NP + i]
+	const double* const* P;          // P[2 * set + player]: the showdown matrices, same layout
 };
 
 struct Ctx {
@@ -323,7 +342,7 @@ __global__ void k_show(Ctx c, const int* ids) {
 		v0 = s0 * (nd.player == 0 ? -loss : loss);
 		v1 = s1 * (nd.player == 1 ? -loss : loss);
 	} else {
-		const double *m0 = c.m.M[nd.allin ? 0 : 1][0], *m1 = c.m.M[nd.allin ? 0 : 1][1];
+		const double *m0 = c.m.P[2 * nd.mset], *m1 = c.m.P[2 * nd.mset + 1];
 		double g0 = 0, p0 = 0, g1 = 0, p1 = 0;
 		for (int j = 0; j < c.n; j++) {
 			const double w = c.m.W[j * NP + h];
@@ -401,12 +420,14 @@ struct Solver {
 	std::vector<std::vector<int> > levels;  // decision nodes by depth (global ids)
 	std::vector<int> lv_off;                // where each level starts in d_lv
 	int G = 0, S = 0;                       // nodes, action slots
+	std::string tag;                        // written to the JSON as "realisation" when not empty
 	long long done = 0;                     // iterations finished
 	Ctx ctx;
 	int *d_lv = nullptr, *d_dec = nullptr, *d_term = nullptr;
 	double *d_reach = nullptr, *d_val = nullptr, *d_sigma = nullptr, *d_regret = nullptr, *d_sum = nullptr, *d_t = nullptr;
 	DevNode* d_nodes = nullptr;
-	double* d_mats[5] = {};
+	std::vector<double*> d_mats;
+	const double** d_matp = nullptr;
 	cudaGraphExec_t exec = nullptr;
 	cudaStream_t stream = nullptr;
 
@@ -424,6 +445,8 @@ struct Solver {
 				d.kind = s.kind;
 				d.player = s.player;
 				d.allin = s.allin;
+				d.mset = s.allin ? 0 : (s.mset >= 0 ? s.mset : 1);
+				if (s.mset >= 2 && (size_t)(2 * (s.mset - 2) + 1) >= pb.extra.size()) { fprintf(stderr, "bad matrix set\n"); exit(1); }
 				d.c0 = s.c0;
 				d.c1 = s.c1;
 				if (s.kind == DECISION) {
@@ -453,6 +476,7 @@ struct Solver {
 		cudaFree(d_lv); cudaFree(d_dec); cudaFree(d_term); cudaFree(d_reach); cudaFree(d_val);
 		cudaFree(d_sigma); cudaFree(d_regret); cudaFree(d_sum); cudaFree(d_t); cudaFree(d_nodes);
 		for (double* m : d_mats) cudaFree(m);
+		cudaFree(d_matp);
 	}
 	Solver(const Solver&) = delete;
 
@@ -482,13 +506,17 @@ struct Solver {
 		d_term = put(term_ids);
 		// matrices, transposed so that thread i reads column entries j = 0.. with stride-1 across the warp
 		const int n = pb.n;
-		const std::vector<double>* src[5] = {&pb.W, &pb.M[0][0], &pb.M[0][1], &pb.M[1][0], &pb.M[1][1]};
-		for (int m = 0; m < 5; m++) {
+		std::vector<const std::vector<double>*> src = {&pb.W, &pb.M[0][0], &pb.M[0][1], &pb.M[1][0], &pb.M[1][1]};
+		for (const std::vector<double>& m : pb.extra) src.push_back(&m);
+		for (size_t m = 0; m < src.size(); m++) {
 			std::vector<double> t((size_t)NP * NP, 0.0);
 			for (int i = 0; i < n; i++)
 				for (int j = 0; j < n; j++) t[(size_t)j * NP + i] = (*src[m])[i * n + j];
-			d_mats[m] = put(t);
+			d_mats.push_back(put(t));
 		}
+		std::vector<const double*> table;  // set 0 (raw), 1 (formula), then the extra ones
+		for (size_t m = 1; m < d_mats.size(); m++) table.push_back(d_mats[m]);
+		d_matp = (const double**)put(table);
 		d_reach = zeros((size_t)G * 2 * NP);
 		d_val = zeros((size_t)G * 2 * NP);
 		d_sigma = zeros((size_t)S * NP);
@@ -505,7 +533,7 @@ struct Solver {
 		ctx.reach = d_reach; ctx.val = d_val; ctx.sigma = d_sigma; ctx.regret = d_regret; ctx.sum = d_sum;
 		ctx.t = d_t;
 		ctx.m.W = d_mats[0];
-		ctx.m.M[0][0] = d_mats[1]; ctx.m.M[0][1] = d_mats[2]; ctx.m.M[1][0] = d_mats[3]; ctx.m.M[1][1] = d_mats[4];
+		ctx.m.P = d_matp;
 		ctx.n = n;
 		CK(cudaStreamCreate(&stream));
 	}
@@ -691,7 +719,9 @@ struct Solver {
 			}
 		};
 		emit(0, ones);
-		out += "}}";
+		out += "}";
+		if (!tag.empty()) out += ",\"realisation\":\"" + tag + "\"";
+		out += "}";
 		return out;
 	}
 };

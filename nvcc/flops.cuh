@@ -15,6 +15,7 @@
 #include <vector>
 
 struct Flop {
+	int index;           // position in all_flops() (kept in a subset, so results can be mapped back)
 	int cards[3];        // sorted ascending; the representative of the class
 	int weight;          // number of the 22,100 flops this class stands for
 	int suit_kind;       // 0 rainbow (3 suits), 1 two-tone (2 suits), 2 monotone (1 suit)
@@ -60,6 +61,7 @@ static inline const std::vector<Flop>& all_flops() {
 				flop_canon(in, canon);
 				if (canon[0] == a && canon[1] == b && canon[2] == c) {
 					Flop f;
+					f.index = (int)flops.size();
 					f.cards[0] = a; f.cards[1] = b; f.cards[2] = c;
 					f.weight = 0;
 					int suits = 0;
@@ -85,4 +87,91 @@ static inline const std::vector<Flop>& all_flops() {
 					if (f.cards[0] == canon[0] && f.cards[1] == canon[1] && f.cards[2] == canon[2]) { f.weight++; break; }
 			}
 	return flops;
+}
+
+// -- a representative subset ------------------------------------------------------------------------------------
+// Computing something for all 1,755 classes is often too much; a subset of k flops, each weighted by the weight of
+// the group of similar flops it stands for, gives nearly the same average. This is OUR subset (not the list a
+// commercial solver ships), chosen by weighted k-medoids on the board structure so that every kind of flop is
+// represented: the weights of the k flops add up to 22,100 again. Deterministic: integer distances, fixed start,
+// ties broken by index, so every machine gets the same list. subset_flops(184) is the one used first.
+struct FlopFeatures { int v[7]; };  // r0 >= r1 >= r2 (0..12), suit kind x6, paired x6, trips x6
+
+static inline FlopFeatures flop_features(const Flop& f) {
+	int r[3] = {f.cards[0] >> 2, f.cards[1] >> 2, f.cards[2] >> 2};
+	std::sort(r, r + 3, [](int a, int b) { return a > b; });
+	FlopFeatures x;
+	x.v[0] = r[0]; x.v[1] = r[1]; x.v[2] = r[2];
+	x.v[3] = f.suit_kind * 6;
+	x.v[4] = f.paired && !f.trips ? 6 : 0;
+	x.v[5] = f.trips ? 6 : 0;
+	x.v[6] = 0;
+	return x;
+}
+
+static inline int flop_dist(const FlopFeatures& a, const FlopFeatures& b) {
+	int d = 0;
+	for (int i = 0; i < 6; i++) d += (a.v[i] - b.v[i]) * (a.v[i] - b.v[i]);
+	return d;
+}
+
+static inline std::vector<Flop> subset_flops(int k) {
+	const std::vector<Flop>& all = all_flops();
+	const int n = (int)all.size();
+	if (k >= n) return all;
+	std::vector<FlopFeatures> x(n);
+	for (int i = 0; i < n; i++) x[i] = flop_features(all[i]);
+	// start: farthest-first, beginning with the heaviest class
+	std::vector<int> med;
+	std::vector<int> nearest(n, 1 << 30);
+	int first = 0;
+	for (int i = 1; i < n; i++)
+		if (all[i].weight > all[first].weight) first = i;
+	med.push_back(first);
+	while ((int)med.size() < k) {
+		const int last = med.back();
+		int best = -1, best_d = -1;
+		for (int i = 0; i < n; i++) {
+			nearest[i] = std::min(nearest[i], flop_dist(x[i], x[last]));
+			if (nearest[i] > best_d) { best_d = nearest[i]; best = i; }
+		}
+		med.push_back(best);
+	}
+	std::vector<int> assign(n, 0);
+	for (int iter = 0; iter < 100; iter++) {
+		bool changed = false;
+		for (int i = 0; i < n; i++) {  // assign each flop to its nearest medoid (ties: the lower medoid position)
+			int bj = 0, bd = flop_dist(x[i], x[med[0]]);
+			for (int j = 1; j < k; j++) {
+				const int d = flop_dist(x[i], x[med[j]]);
+				if (d < bd) { bd = d; bj = j; }
+			}
+			if (assign[i] != bj) { assign[i] = bj; changed = true; }
+		}
+		for (int j = 0; j < k; j++) {  // new medoid: the member that minimises the weighted distance to the others
+			std::vector<int> members;
+			for (int i = 0; i < n; i++)
+				if (assign[i] == j) members.push_back(i);
+			if (members.empty()) continue;
+			long long best = -1;
+			int bi = med[j];
+			for (int a : members) {
+				long long cost = 0;
+				for (int b : members) cost += (long long)all[b].weight * flop_dist(x[a], x[b]);
+				if (best < 0 || cost < best) { best = cost; bi = a; }
+			}
+			if (bi != med[j]) { med[j] = bi; changed = true; }
+		}
+		if (!changed) break;
+	}
+	std::vector<Flop> out;
+	for (int j = 0; j < k; j++) {
+		Flop f = all[med[j]];
+		f.weight = 0;
+		for (int i = 0; i < n; i++)
+			if (assign[i] == j) f.weight += all[i].weight;
+		if (f.weight > 0) out.push_back(f);
+	}
+	std::sort(out.begin(), out.end(), [](const Flop& a, const Flop& b) { return a.index < b.index; });
+	return out;
 }

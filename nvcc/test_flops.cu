@@ -5,6 +5,7 @@
 
 #include "flops.cuh"
 
+#include <cmath>
 #include <cstdio>
 #include <set>
 
@@ -62,6 +63,51 @@ int main() {
 		canon_ok = canon_ok && a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[0] == c[0] && a[1] == c[1] && a[2] == c[2];
 	}
 	check(canon_ok, "a suit relabelling gives the same canonical flop, and canon is idempotent");
+
+	// the 184-flop subset: our representative list
+	{
+		std::vector<Flop> sub = subset_flops(184);
+		long long sw = 0;
+		bool kinds[3] = {false, false, false};
+		bool has_paired = false, has_trips = false, has_ace = false, has_deuce = false, has_connected = false, has_gapped = false;
+		std::set<int> idx;
+		double mean_high_full = 0, mean_high_sub = 0, mean_span_full = 0, mean_span_sub = 0, w_two_full = 0, w_two_sub = 0;
+		for (const Flop& x : sub) {
+			sw += x.weight;
+			kinds[x.suit_kind] = true;
+			has_paired = has_paired || (x.paired && !x.trips);
+			has_trips = has_trips || x.trips;
+			has_ace = has_ace || x.high == 12;
+			has_deuce = has_deuce || x.high == 2;
+			has_connected = has_connected || (!x.paired && x.span <= 3);
+			has_gapped = has_gapped || (!x.paired && x.span >= 8);
+			idx.insert(x.index);
+			mean_high_sub += (double)x.weight * x.high;
+			mean_span_sub += (double)x.weight * x.span;
+			w_two_sub += x.suit_kind == 1 ? x.weight : 0;
+		}
+		for (const Flop& x : f) {
+			mean_high_full += (double)x.weight * x.high;
+			mean_span_full += (double)x.weight * x.span;
+			w_two_full += x.suit_kind == 1 ? x.weight : 0;
+		}
+		check(sub.size() == 184, "the subset has 184 flops");
+		check(sw == 22100, "the subset weights add up to 22,100 again");
+		check(idx.size() == 184, "the 184 are different classes (their indices point into the 1,755)");
+		check(kinds[0] && kinds[1] && kinds[2], "all three suit structures are represented");
+		check(has_paired && has_trips, "paired boards and trips are represented");
+		check(has_ace && has_deuce && has_connected && has_gapped, "ace-high, low, connected and disconnected flops are represented");
+		check(std::fabs(mean_high_sub - mean_high_full) / 22100 < 0.15, "the weighted mean high card is close to the full set's (within 0.15 of a rank)");
+		check(std::fabs(mean_span_sub - mean_span_full) / 22100 < 0.15, "the weighted mean span is close to the full set's (within 0.15)");
+		check(std::fabs(w_two_sub - w_two_full) / 22100 < 0.02, "the share of two-tone flops is within 2 points of the full set's");
+		std::vector<Flop> again = subset_flops(184);
+		bool same = again.size() == sub.size();
+		for (size_t i = 0; same && i < sub.size(); i++) same = again[i].index == sub[i].index && again[i].weight == sub[i].weight;
+		check(same, "the subset is deterministic");
+		printf("  (mean high card: full %.3f, subset %.3f; mean span: full %.3f, subset %.3f; two-tone share: full %.4f, subset %.4f)\n",
+		       mean_high_full / 22100, mean_high_sub / 22100, mean_span_full / 22100, mean_span_sub / 22100, w_two_full / 22100,
+		       w_two_sub / 22100);
+	}
 
 	printf(failures ? "FAIL\n" : "PASS\n");
 	return failures ? 1 : 0;

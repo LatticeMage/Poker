@@ -1,6 +1,7 @@
 <!--
 	Pick a few cards: a row of slots and a deck to click. The highlighted slot takes the next card
-	and the highlight moves on. `blocked` cards (used elsewhere) cannot be picked.
+	and the highlight moves on to the next empty slot of the same group. `blocked` cards (used
+	elsewhere) cannot be picked.
 
 	The picker owns no cards: it shows `cards` and reports each change through `onpick(slot, card)`,
 	so the slots can come from separate pieces of state (a board and a hand) joined only for display.
@@ -49,11 +50,20 @@
 	const gone = $derived(new Set([...blocked, ...mine]));
 
 	function put(card: Card) {
-		// Move to the next empty slot, else the next slot.
-		const empty = cards.findIndex((c, i) => i !== cursor && c === null);
-		const next = empty >= 0 ? empty : (cursor + 1) % cards.length;
-		onpick(cursor, card);
-		cursor = next;
+		const at = cursor;
+		onpick(at, card);
+		// Stay in the group being filled (picking a hand card moves on to the other hand card, never
+		// to the board): the next empty slot of that group, looking forward and then round. A full
+		// group keeps the highlight where it is, so another click corrects the card just placed.
+		const group = shown.find((g) => at >= g.from && at < g.to) ?? { from: 0, to: cards.length };
+		const size = group.to - group.from;
+		for (let step = 1; step < size; step++) {
+			const i = group.from + ((at - group.from + step) % size);
+			if (cards[i] === null) {
+				cursor = i;
+				return;
+			}
+		}
 	}
 
 	function clearSlot(index: number) {

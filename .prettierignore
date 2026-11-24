@@ -7,3 +7,8 @@ bun.lockb
 
 # Miscellaneous
 /static/
+
+# agent worktrees, external clones, generated CUDA output
+.claude
+.tmp
+nvcc/data

@@ -1,6 +1,6 @@
 // Shapes of the game API (backend/src/models/game.py).
 //
-// The API is stateless: the client keeps the whole `GameState` (see stores/game.store.ts) and
+// The API is stateless: the client keeps the whole `GameState` (see stores/game.svelte.ts) and
 // sends it with every request. It includes every robot's hole cards and the undealt board
 // (`runout`) - the UI must only draw what a player at the table could see.
 

@@ -1,7 +1,7 @@
 // The game as the client holds it. The backend is stateless: this store is the only copy of the
 // game, it is sent with every request, and it is saved to localStorage so a reload carries on.
 //
-//   event -> lib/actions/games.ts -> engine -> reply -> this store -> $-subscriptions in the UI
+//   event -> lib/actions/games.ts -> engine -> reply -> this store -> derived values in the UI
 //
 // A reply holds the final `state` plus the `steps` that led to it. `showReply` plays the steps
 // one at a time, paced by the robot-speed setting, so the table shows the robots acting in turn.
@@ -10,7 +10,6 @@
 import { browser } from '$app/environment';
 import { settings } from '$lib/stores/settings.svelte';
 import type { GameEvent, GameReply, GameState, Legal, Step } from '$lib/types/game';
-import { derived, get, writable } from 'svelte/store';
 
 export interface LogLine extends GameEvent {
 	id: number;
@@ -20,28 +19,26 @@ const STORAGE_KEY = 'robo-holdem:game';
 const MAX_LOG_LINES = 500;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** The table: cards, chips, pots - as of the step currently shown. */
-export const game = writable<GameState | null>(null);
-/** Your options - set only while it is your turn and the replay has caught up. */
-export const legal = writable<Legal | null>(null);
-export const log = writable<LogLine[]>([]);
-/** A request is in flight. */
-export const loading = writable(false);
-/** Steps of the last reply are still being shown. */
-export const replaying = writable(false);
-export const error = writable<string | null>(null);
+class Table {
+	/** The table: cards, chips, pots - as of the step currently shown. */
+	game = $state.raw<GameState | null>(null);
+	/** Your options - set only while it is your turn and the replay has caught up. */
+	legal = $state.raw<Legal | null>(null);
+	log = $state.raw<LogLine[]>([]);
+	/** A request is in flight. */
+	loading = $state(false);
+	/** Steps of the last reply are still being shown. */
+	replaying = $state(false);
+	error = $state<string | null>(null);
 
-export const hero = derived(game, ($game) => $game?.players.find((p) => p.is_human) ?? null);
-/** You have busted; the robots are playing on. */
-export const heroOut = derived(
-	hero,
-	($hero) => !!$hero && $hero.chips === 0 && $hero.place !== null
-);
-/** The hand is over and the next deal is up to the player (or the auto-deal timer). */
-export const awaitingNext = derived(
-	[game, replaying, loading],
-	([$game, $replaying, $loading]) => $game?.phase === 'hand_over' && !$replaying && !$loading
-);
+	hero = $derived(this.game?.players.find((p) => p.is_human) ?? null);
+	/** You have busted; the robots are playing on. */
+	heroOut = $derived(!!this.hero && this.hero.chips === 0 && this.hero.place !== null);
+	/** The hand is over and the next deal is up to the player (or the auto-deal timer). */
+	awaitingNext = $derived(this.game?.phase === 'hand_over' && !this.replaying && !this.loading);
+}
+
+export const table = new Table();
 
 /** The game after the latest reply - what the next request must carry. Never a mid-replay step. */
 let authoritative: GameState | null = null;
@@ -78,12 +75,12 @@ function persist(state: GameState | null, options: Legal | null, history: LogLin
 export function reset(forgetSaved = true): number {
 	authoritative = null;
 	authoritativeLegal = null;
-	game.set(null);
-	legal.set(null);
-	log.set([]);
-	loading.set(false);
-	replaying.set(false);
-	error.set(null);
+	table.game = null;
+	table.legal = null;
+	table.log = [];
+	table.loading = false;
+	table.replaying = false;
+	table.error = null;
 	if (forgetSaved) persist(null, null, []);
 	return ++generation;
 }
@@ -109,9 +106,9 @@ export function restore(): boolean {
 		reset(false); // the saved copy is the one being loaded: keep it for the next reload
 		authoritative = saved.state;
 		authoritativeLegal = saved.legal ?? null;
-		game.set(saved.state);
-		legal.set(authoritativeLegal);
-		log.set(Array.isArray(saved.log) ? saved.log.slice(-MAX_LOG_LINES) : []);
+		table.game = saved.state;
+		table.legal = authoritativeLegal;
+		table.log = Array.isArray(saved.log) ? saved.log.slice(-MAX_LOG_LINES) : [];
 		return true;
 	} catch {
 		return false;
@@ -140,22 +137,22 @@ export async function showReply(reply: GameReply, forGeneration: number): Promis
 	authoritative = reply.state;
 	authoritativeLegal = reply.legal;
 	const incoming = lines(reply.steps.flatMap((s) => s.events));
-	persist(reply.state, reply.legal, [...get(log), ...incoming].slice(-MAX_LOG_LINES));
+	persist(reply.state, reply.legal, [...table.log, ...incoming].slice(-MAX_LOG_LINES));
 
-	legal.set(null);
-	replaying.set(true);
+	table.legal = null;
+	table.replaying = true;
 	let shown = 0;
 	for (const [index, step] of reply.steps.entries()) {
-		const ms = delay(step, index, get(game));
+		const ms = delay(step, index, table.game);
 		if (ms > 0) await sleep(ms);
 		if (forGeneration !== generation) return false;
-		game.set(step.state);
+		table.game = step.state;
 		const mine = incoming.slice(shown, shown + step.events.length);
 		shown += step.events.length;
-		log.update((all) => [...all, ...mine].slice(-MAX_LOG_LINES));
+		table.log = [...table.log, ...mine].slice(-MAX_LOG_LINES);
 	}
-	game.set(reply.state);
-	replaying.set(false);
-	legal.set(authoritativeLegal);
+	table.game = reply.state;
+	table.replaying = false;
+	table.legal = authoritativeLegal;
 	return true;
 }

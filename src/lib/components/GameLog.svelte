@@ -1,21 +1,19 @@
 <!-- Scrolling hand history; follows the newest line. -->
 
 <script lang="ts">
-	import type { LogLine } from '$lib/stores/game.store';
+	import type { LogLine } from '$lib/stores/game.svelte';
 
 	let { lines }: { lines: LogLine[] } = $props();
 
-	let box: HTMLDivElement | undefined = $state();
-
-	$effect(() => {
-		// Re-run whenever a line is added.
+	// Keep the newest line in view: the attachment runs again whenever a line is added.
+	function follow(box: HTMLDivElement) {
 		void lines.length;
-		if (box) box.scrollTop = box.scrollHeight;
-	});
+		box.scrollTop = box.scrollHeight;
+	}
 </script>
 
 <div
-	bind:this={box}
+	{@attach follow}
 	class="h-full overflow-y-auto px-3 py-2 text-[13px] leading-snug"
 	role="log"
 	aria-label="Hand history"

@@ -225,14 +225,16 @@ describe('facing an open, a 3-bet: sampled from the chart', () => {
 
 describe('heads-up: the solved trees', () => {
 	it('picks the nearest solved depth', () => {
-		expect(HEADS_UP_STACKS.sort((a, b) => a - b)).toEqual([10, 20, 40, 80]);
-		expect(nearestDepth(7)).toBe(10);
-		expect(nearestDepth(14)).toBe(10);
-		expect(nearestDepth(15)).toBe(20);
-		expect(nearestDepth(30)).toBe(40);
-		expect(nearestDepth(60)).toBe(80);
-		expect(nearestDepth(100)).toBe(80);
-		expect(nearestDepth(300)).toBe(80);
+		const depths = [...HEADS_UP_STACKS].sort((a, b) => a - b);
+		expect(depths).toEqual([5, 10, 15, 20, 30, 40, 50, 60, 80, 100, 150]);
+		for (const d of depths) expect(nearestDepth(d)).toBe(d);
+		// in log terms: 25 is closer to 20 than to 30 (ratios 1.25 and 1.2 the other way round)
+		expect(nearestDepth(24)).toBe(20);
+		expect(nearestDepth(25)).toBe(30);
+		expect(nearestDepth(14)).toBe(15);
+		expect(nearestDepth(70)).toBe(80);
+		expect(nearestDepth(120)).toBe(100);
+		expect(nearestDepth(300)).toBe(150);
 	});
 
 	it('names the node from the betting so far', () => {

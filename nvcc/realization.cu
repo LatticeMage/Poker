@@ -4,6 +4,7 @@
 //   ./realization run 200000 data/realization.json       all pot types and depths -> JSON (resumable)
 //   ./realization show srp 100 20000 [all]               one pot type and depth, print a summary (and every class)
 //   ./realization compare data/realization.json          how far the table is from the old heuristic
+//   ./realization sens 20000                              how much the table moves when the policy constants change
 //
 // The ranges are read from src/lib/poker/data (charts.json, spots.json); POKER_DATA overrides that folder.
 
@@ -91,6 +92,55 @@ static int cmd_compare(const std::string& path) {
 	return 0;
 }
 
+
+// How much the table depends on the policy constants: every variant changes one thing, and for each pot type at
+// 100bb the range factors and the class-by-class change of the realised share against the default are printed.
+static int cmd_sens(long long boards) {
+	std::vector<PotDef> pots = make_pots(data_dir());
+	struct Variant { const char* name; Pol pol; };
+	std::vector<Variant> vs;
+	auto add = [&](const char* name, auto edit) { Pol p = default_pol(); edit(p); vs.push_back({name, p}); };
+	add("default", [](Pol&) {});
+	add("defend 0.85x", [](Pol& p) { p.defend = 0.85f; });
+	add("defend 1.15x", [](Pol& p) { p.defend = 1.15f; });
+	add("value shares 0.6x", [](Pol& p) { for (int i = 0; i < 3; i++) { p.vo[i] *= 0.6f; p.vi[i] *= 0.6f; } });
+	add("value shares 1.5x", [](Pol& p) { for (int i = 0; i < 3; i++) { p.vo[i] *= 1.5f; p.vi[i] *= 1.5f; } });
+	add("bets 0.7x", [](Pol& p) { for (int i = 0; i < 3; i++) p.bet[i] *= 0.7f; });
+	add("bets 1.4x", [](Pol& p) { for (int i = 0; i < 3; i++) p.bet[i] *= 1.4f; });
+	add("no raises", [](Pol& p) { p.rho = 0.f; });
+	add("raises 3x as often", [](Pol& p) { p.rho = 0.15f; p.raise_spr = 4.f; });
+	add("all-in at 40% of stack", [](Pol& p) { p.commit = 0.4f; });
+	add("all-in at 85% of stack", [](Pol& p) { p.commit = 0.85f; });
+	for (const PotDef& def : pots) {
+		const int depth = 100;
+		std::vector<Scn> sc = {{(float)(2 * def.c), (float)(depth - def.c)}};
+		printf("%s, %dbb, %lld boards\n", def.key.c_str(), depth, boards);
+		printf("  %-24s %8s %8s | %12s %12s\n", "variant", "IP", "OOP", "IP rms d", "OOP rms d");
+		SimResult base;
+		for (size_t k = 0; k < vs.size(); k++) {
+			SimResult r = simulate(def.ip, def.oop, sc, boards, 5, false, &vs[k].pol);
+			if (k == 0) base = r;
+			printf("  %-24s", vs[k].name);
+			Summary m[2] = {range_summary(r, 0, 0, def.ip), range_summary(r, 0, 1, def.oop)};
+			printf(" %8.4f %8.4f |", m[0].factor, m[1].factor);
+			for (int side = 0; side < 2; side++) {
+				const auto& w = side ? def.oop : def.ip;
+				double s = 0, sw = 0;
+				for (int c = 0; c < NCLASS; c++) {
+					const double k_ = w[c] * combos_of_class(c);
+					const double d = r.cells[side * NCLASS + c].real - base.cells[side * NCLASS + c].real;
+					s += k_ * d * d;
+					sw += k_;
+				}
+				printf(" %12.4f", sqrt(s / sw));
+			}
+			printf("\n");
+			fflush(stdout);
+		}
+	}
+	return 0;
+}
+
 int main(int argc, char** argv) {
 	std::string mode = argc > 1 ? argv[1] : "";
 	try {
@@ -99,10 +149,11 @@ int main(int argc, char** argv) {
 		if (mode == "run" && argc >= 3) return cmd_run(atoll(argv[2]), argc >= 4 ? argv[3] : "data/realization.json", argc >= 5 ? strtoull(argv[4], 0, 10) : 20261124ull);
 		if (mode == "show" && argc >= 5) return cmd_show(argv[2], atoi(argv[3]), atoll(argv[4]), argc > 5);
 		if (mode == "compare" && argc >= 3) return cmd_compare(argv[2]);
+		if (mode == "sens" && argc >= 3) return cmd_sens(atoll(argv[2]));
 	} catch (const std::exception& e) {
 		fprintf(stderr, "error: %s\n", e.what());
 		return 1;
 	}
-	fprintf(stderr, "usage: realization run BOARDS [out.json [seed]] | show POT DEPTH BOARDS [all] | compare file.json\n");
+	fprintf(stderr, "usage: realization run BOARDS [out.json [seed]] | show POT DEPTH BOARDS [all] | compare file.json | sens BOARDS\n");
 	return 1;
 }

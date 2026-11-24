@@ -32,3 +32,4 @@ tools/.cache
 
 # external repos cloned for reference
 .tmp
+.claude/worktrees

@@ -112,7 +112,7 @@ static const int BLOCKS_PER_PAIR = 64;
 // valid counts. Every launch goes through dispatch(), which checks the GPU temperature first.
 static inline void run_pairs(const std::vector<int2>& pairs, long long samples, uint64_t seed, std::vector<double>& eq,
                              std::vector<unsigned long long>& valid_out, bool verbose = false,
-                             uint64_t pairs_per_batch = 256) {
+                             uint64_t pairs_per_batch = 256, const std::string& ckpt = "", uint64_t stop_after = 0) {
 	const int P = (int)pairs.size();
 	const int per_thread = (int)((samples + (long long)BLOCKS_PER_PAIR * BLOCK - 1) / ((long long)BLOCKS_PER_PAIR * BLOCK));
 	int2* d_pairs;
@@ -123,10 +123,30 @@ static inline void run_pairs(const std::vector<int2>& pairs, long long samples, 
 	CK(cudaMemcpy(d_pairs, pairs.data(), P * sizeof(int2), cudaMemcpyHostToDevice));
 	CK(cudaMemset(d_w, 0, P * sizeof(unsigned long long)));
 	CK(cudaMemset(d_v, 0, P * sizeof(unsigned long long)));
+	// relay: the state of the run is the two accumulators
+	Relay relay;
+	relay.path = ckpt;
+	relay.stop_after = stop_after;
+	relay.tag = relay_hash_u64(relay_hash_u64(relay_hash_u64(1, (uint64_t)samples), seed), (uint64_t)per_thread);
+	relay.tag = relay_hash(relay.tag, pairs.data(), pairs.size() * sizeof(int2));
+	relay.save_state = [&](FILE* f) {
+		std::vector<unsigned long long> w(P), v(P);
+		CK(cudaMemcpy(w.data(), d_w, P * 8, cudaMemcpyDeviceToHost));
+		CK(cudaMemcpy(v.data(), d_v, P * 8, cudaMemcpyDeviceToHost));
+		fwrite(w.data(), 8, P, f);
+		fwrite(v.data(), 8, P, f);
+	};
+	relay.load_state = [&](FILE* f) {
+		std::vector<unsigned long long> w(P), v(P);
+		if (fread(w.data(), 8, P, f) != (size_t)P || fread(v.data(), 8, P, f) != (size_t)P) return false;
+		CK(cudaMemcpy(d_w, w.data(), P * 8, cudaMemcpyHostToDevice));
+		CK(cudaMemcpy(d_v, v.data(), P * 8, cudaMemcpyHostToDevice));
+		return true;
+	};
 	dispatch(P, pairs_per_batch, [&](uint64_t first, uint64_t count) {
 		dim3 grid(BLOCKS_PER_PAIR, (unsigned)count);
 		matchup_kernel<<<grid, BLOCK>>>(d_pairs + first, per_thread, seed, d_w + first, d_v + first);
-	}, "pairs", verbose);
+	}, "pairs", verbose, &relay);
 	std::vector<unsigned long long> w(P), v(P);
 	CK(cudaMemcpy(w.data(), d_w, P * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
 	CK(cudaMemcpy(v.data(), d_v, P * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
@@ -147,7 +167,8 @@ static inline std::vector<int2> all_pairs() {
 // Exact equity of each pair: every non-conflicting (combo of a, combo of b) on all C(48,5) boards.
 // njob_out[p] is the number of combo pairs that went into pair p.
 static inline void exact_pairs(const std::vector<int2>& pairs, std::vector<double>& eq,
-                               std::vector<unsigned long long>& njob_out, bool verbose) {
+                               std::vector<unsigned long long>& njob_out, bool verbose, const std::string& ckpt = "",
+                               uint64_t jobs_per_batch = 32768, uint64_t stop_after = 0) {
 	uint32_t binom[49][6] = {};
 	for (int nn = 0; nn <= 48; nn++) {
 		binom[nn][0] = 1;
@@ -176,10 +197,27 @@ static inline void exact_pairs(const std::vector<int2>& pairs, std::vector<doubl
 	CK(cudaMemcpy(d_jobs, jobs.data(), jobs.size() * 4, cudaMemcpyHostToDevice));
 	CK(cudaMemcpy(d_pairs, pairs.data(), pairs.size() * sizeof(int2), cudaMemcpyHostToDevice));
 	CK(cudaMemset(d_w, 0, pairs.size() * 8));
-	dispatch(jobs.size(), 32768, [&](uint64_t first, uint64_t nj) {
+	// relay: the state of the run is the per-pair win counter
+	Relay relay;
+	relay.path = ckpt;
+	relay.stop_after = stop_after;
+	relay.tag = relay_hash_u64(relay_hash_u64(2, TOTAL_BOARDS), CHUNKS);
+	relay.tag = relay_hash(relay.tag, pairs.data(), pairs.size() * sizeof(int2));
+	relay.save_state = [&](FILE* f) {
+		std::vector<unsigned long long> w(pairs.size());
+		CK(cudaMemcpy(w.data(), d_w, pairs.size() * 8, cudaMemcpyDeviceToHost));
+		fwrite(w.data(), 8, w.size(), f);
+	};
+	relay.load_state = [&](FILE* f) {
+		std::vector<unsigned long long> w(pairs.size());
+		if (fread(w.data(), 8, w.size(), f) != w.size()) return false;
+		CK(cudaMemcpy(d_w, w.data(), w.size() * 8, cudaMemcpyHostToDevice));
+		return true;
+	};
+	dispatch(jobs.size(), jobs_per_batch, [&](uint64_t first, uint64_t nj) {
 		uint64_t threads = nj * CHUNKS;
 		exact_kernel<<<(unsigned)((threads + 255) / 256), 256>>>(d_jobs, d_pairs, first, nj, d_w);
-	}, "jobs", verbose);
+	}, "jobs", verbose, &relay);
 	std::vector<unsigned long long> w(pairs.size());
 	CK(cudaMemcpy(w.data(), d_w, pairs.size() * 8, cudaMemcpyDeviceToHost));
 	cudaFree(d_jobs); cudaFree(d_pairs); cudaFree(d_w);

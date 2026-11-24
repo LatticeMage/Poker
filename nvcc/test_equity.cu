@@ -178,6 +178,37 @@ int main(int argc, char** argv) {
 		failures += worst >= 5;
 	}
 
+	// 5. relay: an interrupted run, carried on from its checkpoint, gives exactly the numbers of an uninterrupted one
+	{
+		const char* ck1 = "/tmp/test_equity_exact.ckpt";
+		const char* ck2 = "/tmp/test_equity_sampled.ckpt";
+		remove(ck1);
+		remove(ck2);
+		std::vector<int2> pr = {make_int2(class_index("AKs"), class_index("QQ")), make_int2(class_index("AA"), class_index("KK")),
+		                        make_int2(class_index("JTs"), class_index("AKo")), make_int2(class_index("22"), class_index("43s")),
+		                        make_int2(class_index("87s"), class_index("AJo"))};
+		std::vector<double> whole, part, resumed;
+		std::vector<unsigned long long> nj, nj2, v;
+		exact_pairs(pr, whole, nj, false);
+		exact_pairs(pr, part, nj2, false, ck1, 16, 4);     // 4 batches of 16 jobs, then "killed"
+		exact_pairs(pr, resumed, nj2, false, ck1, 16, 0);  // the same command again
+		bool same = whole.size() == resumed.size() && part != whole;
+		for (size_t i = 0; i < whole.size(); i++) same = same && whole[i] == resumed[i];
+		printf("relay, exact: interrupted after 4 batches, then resumed: %s\n", same ? "identical to the uninterrupted run, ok" : "BAD");
+		failures += !same;
+
+		std::vector<double> sw, sp, sr;
+		run_pairs(pr, 1000000, 5, sw, v);
+		run_pairs(pr, 1000000, 5, sp, v, false, 2, ck2, 1);  // 1 batch of 2 pairs, then "killed"
+		run_pairs(pr, 1000000, 5, sr, v, false, 2, ck2, 0);
+		bool same2 = sw.size() == sr.size() && sp != sw;
+		for (size_t i = 0; i < sw.size(); i++) same2 = same2 && sw[i] == sr[i];
+		printf("relay, sampled: interrupted after 1 batch, then resumed: %s\n", same2 ? "identical to the uninterrupted run, ok" : "BAD");
+		failures += !same2;
+		remove(ck1);
+		remove(ck2);
+	}
+
 	printf(failures ? "FAIL\n" : "PASS\n");
 	return failures ? 1 : 0;
 }

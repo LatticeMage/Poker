@@ -74,6 +74,69 @@ int main() {
 	for (size_t i = 1; i < firsts.size(); i++) ordered = ordered && firsts[i] == firsts[i - 1] + 7;
 	check(ordered && firsts.size() == 15, "100 items in batches of 7: 15 batches in order");
 
+	// 6. relay: an interrupted task carries on from the saved batch and ends with the same state
+	{
+		const char* path = "/tmp/test_dispatch.ckpt";
+		remove(path);
+		uint64_t sum = 0;  // the task's state: item i adds i + 1
+		auto work = [&](uint64_t first, uint64_t count) {
+			for (uint64_t i = first; i < first + count; i++) sum += i + 1;
+		};
+		auto make = [&](Relay& r, uint64_t tag) {
+			r.path = path;
+			r.tag = tag;
+			r.every_s = 0;
+			r.save_state = [&](FILE* f) { fwrite(&sum, 8, 1, f); };
+			r.load_state = [&](FILE* f) { return fread(&sum, 8, 1, f) == 1; };
+		};
+		const uint64_t want = 100 * 101 / 2;
+
+		Relay r1;
+		make(r1, 7);
+		r1.stop_after = 5;
+		sum = 0;
+		n = dispatch(100, 7, work, "", false, &r1);
+		check(n == 5 && r1.done == 35, "relay: stopped after 5 batches of 7, 35 items done and saved");
+
+		sum = 999999;  // a new process starts with nothing: the state must come from the file
+		Relay r2;
+		make(r2, 7);
+		n = dispatch(100, 7, work, "", false, &r2);
+		check(n == 10 && sum == want && r2.done == 100, "relay: the rerun does only the 10 missing batches and ends with the full result");
+
+		sum = 0;
+		Relay r3;
+		make(r3, 7);
+		n = dispatch(100, 7, work, "", false, &r3);
+		check(n == 0 && sum == want, "relay: a finished task restores its answer and launches nothing");
+
+		sum = 0;
+		Relay r4;
+		make(r4, 8);  // another problem (tag)
+		n = dispatch(100, 7, work, "", false, &r4);
+		check(n == 15 && sum == want, "relay: a file with another tag is ignored (full run, same answer)");
+
+		sum = 0;
+		Relay r5;
+		make(r5, 8);
+		n = dispatch(100, 5, work, "", false, &r5);
+		check(n == 20 && sum == want, "relay: a file made with another batch size is ignored");
+
+		FILE* f = fopen(path, "wb");  // a damaged file
+		fwrite("RLY1", 1, 4, f);
+		fclose(f);
+		sum = 0;
+		Relay r6;
+		make(r6, 8);
+		n = dispatch(100, 5, work, "", false, &r6);
+		check(n == 20 && sum == want, "relay: a damaged file is ignored");
+
+		FILE* t = fopen("/tmp/test_dispatch.ckpt.tmp", "rb");
+		check(t == nullptr, "relay: no half-written .tmp file is left behind");
+		if (t) fclose(t);
+		remove(path);
+	}
+
 	printf(failures ? "FAIL\n" : "PASS\n");
 	return failures ? 1 : 0;
 }

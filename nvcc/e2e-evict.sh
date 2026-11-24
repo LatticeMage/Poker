@@ -32,7 +32,7 @@ mapfile -t CMD < <(sub "$WORK/$MODE" "$@")
 REL=${RELAY//\{D\}/$WORK/$MODE}
 bash "$GPURUN" -- "${CMD[@]}" > "$WORK/$MODE.log" 2>&1 &
 RP=$!
-for _ in $(seq 1 600); do [ -s "$REL" ] && break; sleep 1; done
+for _ in $(seq 1 7200); do [ -s "$REL" ] && break; sleep 1; done  # up to 2 h: other GPU tasks may be queued ahead
 [ -s "$REL" ] || { echo "FAIL: no relay file appeared"; kill "$RP" 2>/dev/null; exit 1; }
 sleep "$DELAY"
 CP=$(pgrep -P "$RP" | head -1)

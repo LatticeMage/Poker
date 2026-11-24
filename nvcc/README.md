@@ -81,8 +81,24 @@ message (`[relay] ... is for another problem, starting from scratch`; it is also
 `e2e-evict.sh term|kill WORKDIR RELAY_FILE RESULT_FILES -- command {D} ...` runs the command to the end under `gpu-run.sh`
 (the reference), then runs it again, sends `SIGTERM` (as `gpu-cooler.sh` does) or `SIGKILL` to the CUDA process in the
 middle, lets `gpu-run.sh` restart it after the card has cooled, and compares the result files byte for byte with the
-reference. Start it with `setsid nohup`, it is not a GPU job itself (the runs inside are). The results for each tool are in
-its section ("Eviction test").
+reference. Start it with `setsid nohup`, it is not a GPU job itself (the runs inside are). Measured on the RTX 4060 Ti
+(`SIGTERM` = what `gpu-cooler.sh` sends: finish the batch, save, exit 75; `SIGKILL` = nothing runs: the last saved batch is
+all there is; the restart was done by `gpu-run.sh` in each case, a second run after the first was cut short):
+
+| Tool, command (in `nvcc/`, `{D}` = the run's folder)                                                                | Signal | Cut at                          | Restored          | Result files vs uninterrupted |
+| ------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------- | ----------------- | ----------------------------- |
+| `./solve --stacks 5,10,15,20,30,40,50,60,80,100,150 --iters 30000 --out {D}/out --ckpt {D}/prod`                   | TERM   | stopped after 13,000 (saved)    | 13,000 of 30,000  | 11 JSON files and `prod.ckpt`: identical |
+|                                                                                                                     | KILL   | killed, file held 12,000        | 12,000 of 30,000  | identical                     |
+| `./pushfold --iters 300000 --ckpt {D}/pf.ckpt --out {D}/pushfold.json`                                              | TERM   | stopped after 47,000 (saved)    | 47,000 of 300,000 | `pushfold.json`, `pf.ckpt`: identical |
+|                                                                                                                     | KILL   | killed, file held 52,000        | 52,000 of 300,000 | identical                     |
+| `env POKER_DATA=... ./sixmax solve --stack 100 --iters1 200 --iters 800 --report 50 --ckpt {D}/c --out {D}`        | TERM   | stage 2, stopped after 350 (saved) | stage 1 200/200, stage 2 350/800 | `sixmax-100.json`, `c.ckpt`, `c-s1.ckpt`: identical |
+|                                                                                                                     | KILL   | stage 2, file held 250          | stage 1 200/200, stage 2 250/800 | identical                     |
+| `./equity3 gen {D} 0.001 100000 1600000`                                                                            | TERM   | EQ3TERM                         | EQ3TERMR          | EQ3TERMRES                    |
+|                                                                                                                     | KILL   | EQ3KILL                         | EQ3KILLR          | EQ3KILLRES                    |
+
+The command is `bash e2e-evict.sh term|kill WORKDIR RELAY RESULTS -- command`, for example
+`bash e2e-evict.sh kill $PWD/e2e-solve '{D}/prod.ckpt' '{D}/out/headsup-5.json,{D}/prod.ckpt' -- ./solve --stacks 5,10 --iters 30000 --out {D}/out --ckpt {D}/prod`.
+(The state files are small: 1.1 MB for 11 stacks of `solve`, 0.23 MB for `pushfold`, 2.0 MB for `sixmax` at 100bb; `equity3`'s is 47 MB, hence its large batches.)
 
 ## Build
 
@@ -193,7 +209,7 @@ ignored) and it carries on from the last saved batch; the result is bit-identica
 is a multiple of the batch. A finished run keeps its file; a second start restores it without computing.
 Without `--ckpt` the iterations are the same batches without a file. With `--report`, the exploitability line comes at
 the end of the batch that reaches the interval. The state is `S x 192` doubles twice (regrets, sums): 11 stacks of the
-`ladder` tree are STATESIZE. `samples_per_matchup` is written as 0 (`--samples` changes it): 0 means the exact matrix.
+`ladder` tree are 1.1 MB. `samples_per_matchup` is written as 0 (`--samples` changes it): 0 means the exact matrix.
 The exploitability field in the JSON is rounded to 3 decimals as in the TypeScript tool, so it reads 0; the
 console shows the real value.
 

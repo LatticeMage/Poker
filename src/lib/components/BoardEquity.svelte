@@ -86,6 +86,15 @@
 		query ? attempt(() => boardEquity({ ...query, view: 'theirs' })).value?.unknown.grid : undefined
 	);
 
+	// Which colouring the heat map of your range shows: equity, or what to do with each hand.
+	let gridView = $state<'equity' | 'action'>('equity');
+	const facingBet = $derived((inputs.bet ?? 0) > 0);
+	const actionNames = $derived(
+		facingBet
+			? { value: 'raise', bluff: 'bluff-raise', call: 'call', rest: 'fold' }
+			: { value: 'bet for value', bluff: 'bluff', call: 'call', rest: 'check' }
+	);
+
 	const pct = (v: number, digits = 1) => `${(v * 100).toFixed(digits)}%`;
 	const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v * 100).toFixed(1)}`;
 	const youLabel = $derived(side === 'opener' ? opener : other);
@@ -270,15 +279,32 @@
 				/>
 
 				<div class="flex flex-col gap-1.5">
-					<span class="text-xs font-semibold text-slate-400">Equity of each hand</span>
+					<div class="flex flex-wrap items-center gap-2">
+						<span class="text-xs font-semibold text-slate-400">Each hand in your range</span>
+						<div class="flex gap-1" role="tablist" aria-label="Colour by">
+							{#each [{ id: 'equity', label: 'Equity' }, { id: 'action', label: 'What to do' }] as option (option.id)}
+								<button
+									class="chip small"
+									class:selected={gridView === option.id}
+									role="tab"
+									aria-selected={gridView === option.id}
+									onclick={() => (gridView = option.id as 'equity' | 'action')}
+								>
+									{option.label}
+								</button>
+							{/each}
+						</div>
+					</div>
 					<div class="grid gap-3 sm:grid-cols-2">
 						<div class="flex min-w-0 flex-col gap-1">
 							<span class="text-xs font-bold text-amber-400">Your range · {youLabel}</span>
 							<HandGrid
 								hands={new Set<string>()}
 								verb=""
-								label="Equity of your range"
-								heat={result.unknown.grid}
+								label={gridView === 'action' ? 'What to do with each hand' : 'Equity of your range'}
+								heat={gridView === 'equity' ? result.unknown.grid : undefined}
+								mix={gridView === 'action' ? result.unknown.actions : undefined}
+								names={gridView === 'action' ? actionNames : undefined}
 								marked={result.known ? result.known.hand : null}
 							/>
 						</div>
@@ -296,11 +322,32 @@
 							{/if}
 						</div>
 					</div>
-					<div class="flex items-center gap-2 text-[0.65rem] text-slate-400">
-						<span>0%</span>
-						<span class="legend-bar flex-1"></span>
-						<span>100% equity</span>
-					</div>
+					{#if gridView === 'equity'}
+						<div class="flex items-center gap-2 text-[0.65rem] text-slate-400">
+							<span>0%</span>
+							<span class="legend-bar flex-1"></span>
+							<span>100% equity</span>
+						</div>
+					{:else}
+						<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.7rem] text-slate-300">
+							<span
+								><span class="swatch" style:background="#d97706"></span>{facingBet
+									? 'Raise'
+									: 'Bet for value'}</span
+							>
+							{#if !facingBet}
+								<span><span class="swatch" style:background="#f43f5e"></span>Bluff</span>
+							{:else}
+								<span><span class="swatch" style:background="#0284c7"></span>Call</span>
+							{/if}
+							<span
+								><span class="swatch" style:background="#1e293b"></span>{facingBet
+									? 'Fold'
+									: 'Check'}</span
+							>
+							<span class="text-slate-500">Their range is shown by equity only.</span>
+						</div>
+					{/if}
 				</div>
 
 				<div
@@ -416,6 +463,16 @@
 		height: 0.5rem;
 		border-radius: 999px;
 		background: linear-gradient(90deg, rgb(185 28 28), rgb(51 65 85), rgb(21 128 61));
+	}
+
+	.swatch {
+		display: inline-block;
+		width: 0.75rem;
+		height: 0.75rem;
+		margin-right: 0.3rem;
+		border-radius: 0.15rem;
+		vertical-align: -0.1rem;
+		border: 1px solid #475569;
 	}
 
 	.chip {

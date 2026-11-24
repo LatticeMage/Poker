@@ -313,6 +313,29 @@ function recommend(
 }
 
 /**
+ * How often a hand does each thing, as shares of [bet or raise for value, bluff, call]; the rest
+ * checks or folds. The same rules as `recommend`, with the thresholds blurred by the jitter the
+ * robots use, so a hand near a limit is split between the two actions instead of flipping.
+ */
+function actionShares(
+	prof: postflop.Profile,
+	plan: postflop.Plan,
+	toCall: number
+): [number, number, number] {
+	const rank = postflop.rankIn(prof);
+	if (toCall <= 0) {
+		const value = postflop.below(rank, plan.value_cut);
+		// A bluff is a hand with no made hand among the best outside the value region.
+		const bluffs = prof.nopair ? postflop.bluffsAhead(prof, plan.value_cut) : Infinity;
+		const bluff = (1 - value) * (prof.nopair ? postflop.below(bluffs, plan.bluff_quota) : 0);
+		return [value, bluff, 0];
+	}
+	const continues = postflop.below(rank, plan.defend);
+	const raise = continues * postflop.below(rank, 0.1);
+	return [raise, 0, continues - raise];
+}
+
+/**
  * Equity on a heads-up flop, turn or river, with and without knowing your own hand.
  *
  * Unknown hands: neither player's cards are known, so it is range against range: the average equity
@@ -410,7 +433,11 @@ export function boardEquity(q: BoardQuery): BoardEquity {
 			my_hands: postflop.classPoints(board, mine, theirs) ?? [],
 			their_hands: postflop.classPoints(board, theirs, mine) ?? [],
 			view: q.view,
-			grid
+			grid,
+			actions:
+				q.view === 'mine'
+					? (postflop.classActions(board, mine, theirs, (p) => actionShares(p, plan, toCall)) ?? {})
+					: {}
 		},
 		known,
 		plan: {

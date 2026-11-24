@@ -15,6 +15,7 @@
 		marked = null,
 		mix,
 		heat,
+		names,
 		onpick
 	}: {
 		hands: Set<string>;
@@ -27,6 +28,8 @@
 		mix?: Record<string, [number, number, number]>;
 		/** Per hand: a value from 0 to 1 (equity), drawn as a colour from red through grey to green. */
 		heat?: Record<string, number>;
+		/** Names of the three mix shares and of the rest, for tooltips; default raise / bluff / call / fold. */
+		names?: { value: string; bluff: string; call: string; rest: string };
 		onpick?: (hand: string) => void;
 	} = $props();
 
@@ -65,13 +68,19 @@
 
 	function mixTitle(hand: string): string {
 		const [value, bluff, call] = mix?.[hand] ?? [0, 0, 0];
+		const n = names ?? {
+			value: 'raise (value)',
+			bluff: 'raise (bluff)',
+			call: 'call',
+			rest: 'fold'
+		};
 		const parts = [
-			value > 0 && `${bluff > 0 || call > 0 ? 'raise (value)' : verb} ${Math.round(value * 100)}%`,
-			bluff > 0 && `raise (bluff) ${Math.round(bluff * 100)}%`,
-			call > 0 && `call ${Math.round(call * 100)}%`
+			value > 0 && `${names || bluff > 0 || call > 0 ? n.value : verb} ${Math.round(value * 100)}%`,
+			bluff > 0 && `${n.bluff} ${Math.round(bluff * 100)}%`,
+			call > 0 && `${n.call} ${Math.round(call * 100)}%`
 		].filter(Boolean);
-		const fold = Math.max(0, 1 - value - bluff - call);
-		return `${hand} — ${parts.length ? parts.join(', ') : 'fold'}${parts.length && fold > 0.005 ? `, fold ${Math.round(fold * 100)}%` : ''}`;
+		const rest = Math.max(0, 1 - value - bluff - call);
+		return `${hand} — ${parts.length ? parts.join(', ') : n.rest}${parts.length && rest > 0.005 ? `, ${n.rest} ${Math.round(rest * 100)}%` : ''}`;
 	}
 </script>
 

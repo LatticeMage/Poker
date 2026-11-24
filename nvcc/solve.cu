@@ -6,8 +6,12 @@
 //   --matrix FILE     169*169 float64 equity matrix (default data/equity-exact.bin)
 //   --stacks LIST     stack depths in bb, comma separated (default 10,20,40,80)
 //   --iters N         CFR+ iterations (default 4000)
-//   --out DIR         where headsup-<stack>.json goes (default out); --prefix NAME changes "headsup"
+//   --out DIR         where headsup-<stack>.json goes (default out); --prefix NAME changes "headsup", --suffix S appends S after the stack ("-real")
 //   --raw             no realised-equity heuristic: every call is a showdown on raw equity
+//   --real FILE       value calls that see a flop with the realisation table (data/realization.json) instead
+//                     of the formula (solve_realization.cuh says how); the JSON gets a "realisation" field
+//   --real-out MODE   classes outside the table's ranges: formula (default), cap, none
+//   --real-limp MODE  limped pots (no data): formula (default) or srp (borrow the single-raised factors)
 //   --tree ladder     the tree of tools/solve-preflop.ts (default); --open "2.5,9,22" and --limp "4,12" are its
 //                     raise ladders ("," between raises, "/" between alternative sizes of one raise)
 //   --tree mult       the tree of the external solver poker-cfr: raises of 2.5x, 3x, 3.5x, 4x the bet faced
@@ -16,6 +20,7 @@
 //   --samples N       value written to samples_per_matchup (0 = exact matrix)
 
 #include "solve.cuh"
+#include "solve_realization.cuh"
 
 static std::vector<std::string> split(const std::string& s, char sep) {
 	std::vector<std::string> out;
@@ -44,8 +49,8 @@ static double seconds_since(std::chrono::steady_clock::time_point t0) {
 }
 
 int main(int argc, char** argv) {
-	std::string matrix = "data/equity-exact.bin", stacks = "10,20,40,80", out = "out", prefix = "headsup";
-	std::string tree = "ladder", open = "2.5,9,22", limp = "4,12", ckpt;
+	std::string matrix = "data/equity-exact.bin", stacks = "10,20,40,80", out = "out", prefix = "headsup", suffix;
+	std::string tree = "ladder", open = "2.5,9,22", limp = "4,12", ckpt, real, real_out = "formula", real_limp = "formula";
 	long long iters = 4000, ckpt_every = 5000, report = 0, samples = 0;
 	bool raw = false;
 	for (int i = 1; i < argc; i++) {
@@ -59,7 +64,11 @@ int main(int argc, char** argv) {
 		else if (a == "--iters") iters = atoll(val().c_str());
 		else if (a == "--out") out = val();
 		else if (a == "--prefix") prefix = val();
+		else if (a == "--suffix") suffix = val();
 		else if (a == "--raw") raw = true;
+		else if (a == "--real") real = val();
+		else if (a == "--real-out") real_out = val();
+		else if (a == "--real-limp") real_limp = val();
 		else if (a == "--tree") tree = val();
 		else if (a == "--open") open = val();
 		else if (a == "--limp") limp = val();
@@ -72,7 +81,8 @@ int main(int argc, char** argv) {
 	if (report <= 0) report = std::max(1ll, iters / 5);
 
 	setup_classes();
-	Problem pb = make_problem(read_matrix(matrix.c_str()), !raw);
+	const std::vector<double> equity = read_matrix(matrix.c_str());
+	Problem pb = make_problem(equity, !raw);
 	std::vector<double> sizes;
 	std::vector<GameTree> trees;
 	for (const std::string& s : split(stacks, ',')) {
@@ -80,9 +90,26 @@ int main(int argc, char** argv) {
 		trees.push_back(tree == "mult" ? build_mult_tree(sizes.back())
 		                               : build_ladder_tree(sizes.back(), parse_levels(open), parse_levels(limp)));
 	}
+	RealOptions ro;
+	std::string model = raw ? "raw equity (no realisation)" : "formula realised equity";
+	std::string tag;
+	if (!real.empty()) {
+		if (raw) { fprintf(stderr, "--real and --raw exclude each other\n"); return 1; }
+		if (real_out == "cap") ro.out = OUT_CAP;
+		else if (real_out == "formula") ro.out = OUT_FORMULA;
+		else if (real_out == "none") ro.out = OUT_NONE;
+		else { fprintf(stderr, "--real-out: cap, formula or none\n"); return 1; }
+		if (real_limp == "srp") ro.limp = LIMP_SRP;
+		else if (real_limp != "formula") { fprintf(stderr, "--real-limp: formula or srp\n"); return 1; }
+		try {
+			const int sets = apply_realisation(pb, equity, trees, RealTable::load(real), ro);
+			model = "realisation table, " + std::to_string(sets) + " matrix sets, " + ro.describe();
+		} catch (const std::exception& e) { fprintf(stderr, "%s: %s\n", real.c_str(), e.what()); return 1; }
+		tag = ro.describe();
+	}
 	Solver sv(pb, trees);
-	printf("%zu trees, %d nodes, %d action slots, %d levels, %s\n", trees.size(), sv.G, sv.S, sv.nlevels(),
-	       raw ? "raw equity (no realisation)" : "realised equity");
+	sv.tag = tag;
+	printf("%zu trees, %d nodes, %d action slots, %d levels, %s\n", trees.size(), sv.G, sv.S, sv.nlevels(), model.c_str());
 	if (!ckpt.empty() && sv.load((ckpt + ".ckpt").c_str())) printf("resumed from %s.ckpt at iteration %lld\n", ckpt.c_str(), sv.done);
 
 	auto t0 = std::chrono::steady_clock::now();
@@ -112,7 +139,7 @@ int main(int argc, char** argv) {
 	if (system(mk.c_str()) != 0) return 1;
 	for (size_t i = 0; i < trees.size(); i++) {
 		const double e = ex[i].first + ex[i].second;
-		std::string path = out + "/" + prefix + "-" + num(sizes[i]) + ".json";
+		std::string path = out + "/" + prefix + "-" + num(sizes[i]) + suffix + ".json";
 		std::string js = sv.json((int)i, sizes[i], sv.done, samples, e, avg, g_names);
 		FILE* f = fopen(path.c_str(), "wb");
 		if (!f) { fprintf(stderr, "cannot write %s\n", path.c_str()); return 1; }

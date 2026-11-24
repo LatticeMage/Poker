@@ -17,7 +17,10 @@
 //   --tree mult       the tree of the external solver poker-cfr: raises of 2.5x, 3x, 3.5x, 4x the bet faced
 //   --tree pushfold   the push/fold tree: the small blind folds or shoves, the big blind folds or calls (pushfold.cu
 //                     builds the app's push/fold tables on top of it)
-//   --ckpt PREFIX    save PREFIX.ckpt every --ckpt-every iterations (default 5000) and resume from it
+//   --ckpt PREFIX    the relay file PREFIX.ckpt: the state (regrets, strategy sums) is written after EVERY batch of --batch iterations
+//                    and a run started again with the same options carries on from it (bit-identical to an uninterrupted run)
+//   --batch N        iterations per batch (default 1000, about a second; with --report it is the largest divisor of the report interval up to N)
+//   --ckpt-every N   accepted and ignored (the relay saves after every batch)
 //   --report N        print the exploitability every N iterations (default iters / 5)
 //   --samples N       value written to samples_per_matchup (0 = exact matrix)
 
@@ -53,7 +56,7 @@ static double seconds_since(std::chrono::steady_clock::time_point t0) {
 int main(int argc, char** argv) {
 	std::string matrix = "data/equity-exact.bin", stacks = "10,20,40,80", out = "out", prefix = "headsup", suffix;
 	std::string tree = "ladder", open = "2.5,9,22", limp = "4,12", ckpt, real, real_out = "formula", real_limp = "formula";
-	long long iters = 4000, ckpt_every = 5000, report = 0, samples = 0;
+	long long iters = 4000, batch_cap = 1000, report = 0, samples = 0;
 	bool raw = false;
 	for (int i = 1; i < argc; i++) {
 		std::string a = argv[i];
@@ -75,7 +78,8 @@ int main(int argc, char** argv) {
 		else if (a == "--open") open = val();
 		else if (a == "--limp") limp = val();
 		else if (a == "--ckpt") ckpt = val();
-		else if (a == "--ckpt-every") ckpt_every = atoll(val().c_str());
+		else if (a == "--ckpt-every") val();
+		else if (a == "--batch") batch_cap = atoll(val().c_str());
 		else if (a == "--report") report = atoll(val().c_str());
 		else if (a == "--samples") samples = atoll(val().c_str());
 		else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 1; }
@@ -113,25 +117,20 @@ int main(int argc, char** argv) {
 	Solver sv(pb, trees);
 	sv.tag = tag;
 	printf("%zu trees, %d nodes, %d action slots, %d levels, %s\n", trees.size(), sv.G, sv.S, sv.nlevels(), model.c_str());
-	if (!ckpt.empty() && sv.load((ckpt + ".ckpt").c_str())) printf("resumed from %s.ckpt at iteration %lld\n", ckpt.c_str(), sv.done);
-
+	const std::string relay_file = ckpt.empty() ? "" : ckpt + ".ckpt";
 	auto t0 = std::chrono::steady_clock::now();
-	const long long start = sv.done;
-	while (sv.done < iters) {
-		// run to the next report or checkpoint, whichever comes first
-		long long next = iters;
-		next = std::min(next, (sv.done / report + 1) * report);
-		if (!ckpt.empty()) next = std::min(next, (sv.done / ckpt_every + 1) * ckpt_every);
-		sv.iterate(next - sv.done);
-		if (!ckpt.empty() && (sv.done % ckpt_every == 0 || sv.done == iters)) sv.save((ckpt + ".ckpt").c_str());
-		if (sv.done % report == 0 || sv.done == iters) {
+	const long long batch = pick_batch(batch_cap, report);
+	const long long start = relay_file.empty() ? 0 : (long long)relay_peek_done(relay_file);
+	if (start > 0) printf("relay file %s holds %lld of %lld iterations\n", relay_file.c_str(), start, iters);
+	sv.run(iters, relay_file, batch, [&](long long done) {
+		if (done / report > (done - std::min(done, batch)) / report || done == iters) {  // a report interval ended in this batch
 			auto ex = sv.exploitability();
-			printf("iter %lld  %.1fs  exploitability (bb):", sv.done, seconds_since(t0));
+			printf("iter %lld  %.1fs  exploitability (bb):", done, seconds_since(t0));
 			for (size_t i = 0; i < ex.size(); i++) printf(" %g:%.5f", sizes[i], ex[i].first + ex[i].second);
 			printf("\n");
 			fflush(stdout);
 		}
-	}
+	});
 	const double secs = seconds_since(t0);
 	if (sv.done > start) printf("%lld iterations in %.2fs (%.3f ms per iteration)\n", sv.done - start, secs, 1000 * secs / (sv.done - start));
 

@@ -93,7 +93,8 @@ static inline const std::vector<Flop>& all_flops() {
 // Computing something for all 1,755 classes is often too much; a subset of k flops, each weighted by the weight of
 // the group of similar flops it stands for, gives nearly the same average. This is OUR subset (not the list a
 // commercial solver ships), chosen by weighted k-medoids on the board structure so that every kind of flop is
-// represented: the weights of the k flops add up to 22,100 again. Deterministic: integer distances, fixed start,
+// represented, and every one of the 1,755 classes belongs to exactly one group (subset_partition): the weights of
+// the k flops add up to 22,100 again. Deterministic: integer distances, fixed start,
 // ties broken by index, so every machine gets the same list. subset_flops(184) is the one used first.
 struct FlopFeatures { int v[7]; };  // r0 >= r1 >= r2 (0..12), suit kind x6, paired x6, trips x6
 
@@ -115,10 +116,24 @@ static inline int flop_dist(const FlopFeatures& a, const FlopFeatures& b) {
 	return d;
 }
 
-static inline std::vector<Flop> subset_flops(int k) {
+// The subset as a PARTITION: every one of the 1,755 classes belongs to exactly one group, and each group has one
+// representative flop. rep[g] is the representative of group g (its weight = the total weight of the group);
+// group_of[i] is the group of class i of all_flops(); members of a group are the classes with group_of == g.
+struct FlopPartition {
+	std::vector<Flop> rep;        // k representatives, ordered by index in all_flops()
+	std::vector<int> group_of;    // size 1755: index into rep
+};
+
+static inline FlopPartition subset_partition(int k) {
 	const std::vector<Flop>& all = all_flops();
 	const int n = (int)all.size();
-	if (k >= n) return all;
+	if (k >= n) {
+		FlopPartition id;
+		id.rep = all;
+		id.group_of.resize(n);
+		for (int i = 0; i < n; i++) id.group_of[i] = i;
+		return id;
+	}
 	std::vector<FlopFeatures> x(n);
 	for (int i = 0; i < n; i++) x[i] = flop_features(all[i]);
 	// start: farthest-first, beginning with the heaviest class
@@ -164,14 +179,24 @@ static inline std::vector<Flop> subset_flops(int k) {
 		}
 		if (!changed) break;
 	}
-	std::vector<Flop> out;
-	for (int j = 0; j < k; j++) {
+	// groups in the order of their representatives' index in all_flops()
+	std::vector<int> order(k);
+	for (int j = 0; j < k; j++) order[j] = j;
+	std::sort(order.begin(), order.end(), [&](int a, int b) { return all[med[a]].index < all[med[b]].index; });
+	std::vector<int> new_pos(k, -1);
+	FlopPartition out;
+	for (int pos = 0; pos < k; pos++) {
+		const int j = order[pos];
 		Flop f = all[med[j]];
 		f.weight = 0;
 		for (int i = 0; i < n; i++)
 			if (assign[i] == j) f.weight += all[i].weight;
-		if (f.weight > 0) out.push_back(f);
+		if (f.weight > 0) { new_pos[j] = (int)out.rep.size(); out.rep.push_back(f); }
 	}
-	std::sort(out.begin(), out.end(), [](const Flop& a, const Flop& b) { return a.index < b.index; });
+	out.group_of.resize(n);
+	for (int i = 0; i < n; i++) out.group_of[i] = new_pos[assign[i]];
 	return out;
 }
+
+// The representatives alone (each weighted by its group).
+static inline std::vector<Flop> subset_flops(int k) { return subset_partition(k).rep; }

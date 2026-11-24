@@ -268,7 +268,7 @@ static std::string write_result(const RunOpts& o, const Rules& R, Solver6& sol, 
 		kept++;
 		js += "{\"id\":" + jstr(nd.hist) + ",\"type\":" +
 		      jstr(nd.type == NT_LIMP_BB ? "bb_vs_limp" : nd.type == NT_LIMP_SB ? "sb_vs_iso" : nd.type == NT_RESP ? "vs_open_after_callers" :
-		           nd.type == NT_FACE3 ? "vs_3bet_after_callers" : nd.type == NT_FACE4 ? "vs_4bet" : "vs_5bet") +
+		           nd.type == NT_FACE3 ? "vs_3bet_after_callers" : nd.type == NT_FACE3C ? "caller_vs_squeeze" : nd.type == NT_FACE4 ? "vs_4bet" : "vs_5bet") +
 		      ",\"player\":" + jstr(SEAT[nd.player]) + ",\"reach\":" + jnum(pr, 4) + ",\"actions\":[";
 		for (size_t a = 0; a < nd.labels.size(); a++) js += (a ? "," : "") + jstr(nd.labels[a]);
 		js += "],\"freq\":{";

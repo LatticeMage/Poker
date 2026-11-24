@@ -14,7 +14,8 @@
 //                 when the 3-bettor will be in position after the flop, 4x when out of position, plus one open
 //                 per caller already in (a squeeze). At most two players may call an open (three see the flop).
 //   3-bet         everybody except the opener and the 3-bettor folds (cold calls and cold 4-bets are not in
-//                 the game). The opener folds, calls or 4-bets (2.2x the 3-bet).
+//                 the game; players who called the open fold to the 3-bet unless the opener folds first, then they
+//                 may call it, in turn). The opener folds, calls or 4-bets (2.2x the 3-bet).
 //   4-bet         the 3-bettor folds, calls or goes all-in; the opener then folds or calls the all-in.
 //   a raise of 70% of the stack or more is an all-in.
 //
@@ -51,7 +52,7 @@ enum Cat { CAT_LIMP = 0, CAT_SRP, CAT_3BET, CAT_4BET, CAT_ALLIN, NCAT };
 static const char* CAT_NAME[NCAT] = {"limp", "srp", "3bet", "4bet", "allin"};
 
 // -- the game tree (host) --------------------------------------------------------------------------
-enum NodeType { NT_RFI, NT_LIMP_BB, NT_LIMP_SB, NT_RESP, NT_FACE3, NT_FACE4, NT_FACE5, NT_TERM };
+enum NodeType { NT_RFI, NT_LIMP_BB, NT_LIMP_SB, NT_RESP, NT_FACE3, NT_FACE4, NT_FACE5, NT_FACE3C, NT_TERM };
 enum ActKind { A_FOLD, A_CALL, A_RAISE, A_ALLIN, A_LIMP };
 
 struct Node6 {
@@ -198,13 +199,31 @@ struct TreeBuilder {
 		return d;
 	}
 
+	// The opener folded to a squeeze: the players who called his open answer it, one after the other, with fold or
+	// call (their open is dead money in the pot). Without callers the 3-bettor just wins.
+	int callers_answer(int o, int r, const std::vector<int>& callers, size_t idx, double t3, const double* c, const std::string& hist) {
+		if (idx >= callers.size()) return term(1 << r, c, -1, hist);
+		const int q = callers[idx];
+		const int d = decision(NT_FACE3C, q, hist);
+		nodes[d].opener = o;
+		nodes[d].raiser = r;
+		nodes[d].callers = callers;
+		nodes[d].bet = t3;
+		action(d, A_FOLD, "fold", callers_answer(o, r, callers, idx + 1, t3, c, step(hist, q, "f")));
+		double c2[NPLAYER];
+		memcpy(c2, c, sizeof c2);
+		c2[q] = t3;
+		action(d, A_CALL, "call", term((1 << q) | (1 << r), c2, t3 >= R.stack ? CAT_ALLIN : CAT_3BET, step(hist, q, "c")));
+		return d;
+	}
+
 	int face3(int o, int r, const std::vector<int>& callers, double t3, const double* c, const std::string& hist) {
 		const int d = decision(NT_FACE3, o, hist);
 		nodes[d].opener = o;
 		nodes[d].raiser = r;
 		nodes[d].callers = callers;
 		nodes[d].bet = t3;
-		action(d, A_FOLD, "fold", term(1 << r, c, -1, step(hist, o, "f")));
+		action(d, A_FOLD, "fold", callers_answer(o, r, callers, 0, t3, c, step(hist, o, "f")));
 		double c2[NPLAYER];
 		memcpy(c2, c, sizeof c2);
 		c2[o] = t3;

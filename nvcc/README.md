@@ -62,8 +62,27 @@ important lives only on the GPU.
 
 Example: `bash gpu-run.sh -- ./equity exact out.bin` (relay file `out.bin.ckpt`). Keep batches short (seconds), because
 a batch is the unit that can be lost. A program that does not go through `dispatch()` with a relay loses its progress
-when it is evicted. Tools still on their own checkpoints: `solve` (`--ckpt`, saved every N iterations), `equity3`
-(saved every round), `sixmax`.
+when it is evicted. Every tool is a relay now, with its own state in its relay file:
+
+| Tool                | Relay file                                       | State (written after every batch)                       | Batch                                                   |
+| ------------------- | ------------------------------------------------ | ------------------------------------------------------- | ------------------------------------------------------- |
+| `solve`, `pushfold` | `--ckpt PREFIX` gives `PREFIX.ckpt` (`pushfold`: `--ckpt FILE`) | regrets and strategy sums (the iteration count is the relay's `done`) | 1,000 iterations (`--batch`), about 1.3 s |
+| `equity3 gen DIR`   | `DIR/ckpt.bin`                                   | round, rounds done per triple, the accumulators (47 MB) | 1 to 2 s of sampling (up to 60,000 triples)              |
+| `sixmax solve`      | `PREFIX-s1.ckpt` (stage 1), `PREFIX.ckpt` (stage 2) | regrets, strategy sums, the convergence points       | 50 iterations (`--batch`), about 1.3 s                  |
+
+The state is read back exactly (raw doubles and integers), so an interrupted and resumed run equals an uninterrupted one
+bit for bit; every tool has a check for that in its `test_*.cu` and an end-to-end check with `e2e-evict.sh` (below).
+A relay file is tied to its problem (a hash of the inputs and the total): a file for other settings is ignored with a
+message (`[relay] ... is for another problem, starting from scratch`; it is also what you see when a multi-round tool such as
+`equity3` goes on to its next round). Delete the file to recompute a finished task.
+
+### End-to-end eviction checks (`e2e-evict.sh`)
+
+`e2e-evict.sh term|kill WORKDIR RELAY_FILE RESULT_FILES -- command {D} ...` runs the command to the end under `gpu-run.sh`
+(the reference), then runs it again, sends `SIGTERM` (as `gpu-cooler.sh` does) or `SIGKILL` to the CUDA process in the
+middle, lets `gpu-run.sh` restart it after the card has cooled, and compares the result files byte for byte with the
+reference. Start it with `setsid nohup`, it is not a GPU job itself (the runs inside are). The results for each tool are in
+its section ("Eviction test").
 
 ## Build
 
@@ -165,8 +184,16 @@ $NVCC -O3 -fmad=false -arch=sm_89 -o test_solve_external test_solve_external.cu
 ```
 
 It prints the exploitability (best response from both seats, in bb) every `--report` iterations. With
-`--ckpt PREFIX` it saves `PREFIX.ckpt` every `--ckpt-every` iterations and resumes from it when started
-again. `samples_per_matchup` is written as 0 (`--samples` changes it): 0 means the exact matrix.
+`--ckpt PREFIX` the run is a relay: the iterations go through `dispatch()` in batches (`--batch N`, default 1,000
+iterations, about 1.3 s; with `--report` it is the largest divisor of the report interval up to N), and **after every
+batch** `PREFIX.ckpt` gets the regrets and strategy sums (atomically, flushed; the iteration count is the relay's
+`done`). Start the same command again (with the same `--iters` and options: a file made for other settings is
+ignored) and it carries on from the last saved batch; the result is bit-identical to an uninterrupted run
+(checked). `--ckpt-every` is accepted and ignored. An old-format `PREFIX.ckpt` is converted if its iteration count
+is a multiple of the batch. A finished run keeps its file; a second start restores it without computing.
+Without `--ckpt` the iterations are the same batches without a file. With `--report`, the exploitability line comes at
+the end of the batch that reaches the interval. The state is `S x 192` doubles twice (regrets, sums): 11 stacks of the
+`ladder` tree are STATESIZE. `samples_per_matchup` is written as 0 (`--samples` changes it): 0 means the exact matrix.
 The exploitability field in the JSON is rounded to 3 decimals as in the TypeScript tool, so it reads 0; the
 console shows the real value.
 
@@ -189,6 +216,10 @@ console shows the real value.
    20bb; the test requires the same to 1e-6, the same node keys in the same order, and the same reach and
    root frequencies. Outside the test, the whole JSON for 10, 20, 40 and 80 bb was compared with the
    TypeScript output: 4,557 frequencies, 0 differences, identical node lists.
+5. **Relay.** 10 and 20 bb, 1500 iterations in batches of 250: `run()` without a file equals `iterate()`; a run
+   stopped after 2 batches, a new `Solver` restoring it and stopped after 3 more, and a third finishing it (with a
+   half-written `.tmp` left behind, as after a hard kill) end with regrets, strategy sums and averaged strategy equal to
+   the uninterrupted run **bit for bit**; a finished file restores the answer; a file for another total is not used.
 
 ```bash
 ./test_solve_external 20 75000 ../.tmp/poker-cfr/output/preflop-20-75000.bin
@@ -341,8 +372,11 @@ $NVCC -O3 -arch=sm_89 -o test_equity3 test_equity3.cu
 ./equity3 ranges data/equity3.bin "TT+,AQs+,AKo" "22+,A2s+,KTs+,ATo+" "55+,A9s+,KJs+,AJo+"
 ```
 
-`gen [target_se] [n0] [nmax]` writes `run/ckpt.bin` after every round (and every two minutes); start the same
-command again and it carries on. Run it in tmux. Defaults: target standard error 0.03%, 100,000 samples in the
+`gen [target_se] [n0] [nmax]` is a relay: it writes `run/ckpt.bin` after **every batch** (a batch is 1 to 2 s of
+sampling, 6×10⁹ samples, at most 60,000 triples: 47 MB per save, which costs a small part of the batch; the state is
+the round, the rounds done per triple and the accumulators); start the same command again and it carries on from the
+last batch (under `gpu-run.sh` that happens by itself after an eviction). The result equals an uninterrupted run byte
+for byte. A checkpoint of the old format (saved per round) is read too. Defaults: target standard error 0.03%, 100,000 samples in the
 first round, at most 16,000,000 per triple.
 
 ## The table
@@ -400,6 +434,12 @@ to 1.
    Against a combo-level Monte Carlo (about 8×10⁸ deals per setup, own sampling code: each combo drawn with its class
    weight, conflicts rejected) on three realistic setups (a squeeze, a cold call, mixed weights): worst difference
    0.047% (3.2 Monte Carlo SE), frequency-weighted mean difference 0.006 to 0.009%.
+
+8. **Relay** (about 20 s more). Sampling of 9,000 triples and exact enumeration of 30 triples, each stopped after one
+   batch and resumed, equal the uninterrupted results bit for bit; the generator (target 0.3%, n0 4096, nmax 16384:
+   several rounds) uninterrupted, stopped after 3 batches, stopped again in round 1 and resumed gives the same
+   `equity3.bin` and `equity3-se.bin` byte for byte, and so does a run that carries on from a checkpoint of the old
+   (per-round) format taken at the end of round 0.
 
 There is no reduction of the three-way table to the 169×169 matrix: whichever hand the third player holds, it can win
 and it removes cards, so no limiting case is exact except the exchangeability identity above.
@@ -622,6 +662,9 @@ $NVCC -O3 -fmad=false -arch=sm_89 -o pushfold pushfold.cu
 $NVCC -O3 -fmad=false -arch=sm_89 -o test_pushfold test_pushfold.cu
 ./pushfold --iters 300000 --out data/out/pushfold.json      # 70 s on an RTX 4060 Ti (19 stacks at once)
 ./test_pushfold                                             # 20,000 iterations, 2 s
+./pushfold --iters 300000 --ckpt data/out/pushfold.ckpt --out data/out/pushfold.json
+                    # a relay: state saved after every batch of 1,000 iterations (--batch), rerun to carry on; a
+                    # fixed number of iterations, so --tol is ignored
 npm run apply-pushfold && npx prettier --write src/lib/poker/data   # from the repo root: copy into the app's data
 ```
 
@@ -664,8 +707,14 @@ $NVCC -O3 -arch=sm_89 -o test_sixmax test_sixmax.cu
 ```
 
 Run from `nvcc/`; it reads `data/equity-exact.bin`, `data/equity3.bin`, `data/realization.json` and the source charts
-(`../src/lib/poker/data`, or `POKER_DATA`). `--ckpt PREFIX` writes `PREFIX.ckpt` at every report and resumes stage 2 from
-it (stage 1 is deterministic and cheap, it is simply redone). About 650 nodes, 20 of them three-way showdowns; 1000
+(`../src/lib/poker/data`, or `POKER_DATA`). `--ckpt PREFIX` makes both stages relays: the iterations go through `dispatch()` in batches of 50 (`--batch`, about
+1.3 s at 100bb; with `--report` it is the largest divisor of the report interval up to that), and after **every batch**
+the state (regrets, strategy sums, and in stage 2 the convergence points that go into the JSON) is written to
+`PREFIX-s1.ckpt` (stage 1) and `PREFIX.ckpt` (stage 2), atomically and flushed. Start the same command again and it
+carries on from the last batch (stage 1 finished: restored in an instant); the result is bit-identical to an
+uninterrupted run (checked). A file made for other settings (tree, tables, start strategy, `--iters`) is ignored. An old-format
+`PREFIX.ckpt` (before the relay, such as `c100b.ckpt` on the box) is converted when its iteration count is a multiple
+of the batch (15,000 is: batches of 50 or 40 or 25); its convergence list starts empty then. About 650 nodes, 20 of them three-way showdowns; 1000
 iterations take about 25 s on the RTX 4060 Ti, the setup (the 169^3 tensors) about 20 s.
 
 ## The game that is solved
@@ -730,6 +779,11 @@ strategy inside the best response, so the number says how well the first-in rang
 4. **Short real run**: frozen decisions never move, first-in decisions do; two runs of 150 iterations are bit-identical;
    each hand's frequencies sum to 1 (3e-16) and none is negative; best-response gaps are non-negative; zero-sum defect
    below 0.1 bb; the JSON parses, has 5 + 15 + 15 spots and agrees with the strategies.
+
+5. **Relay.** 120 real iterations in batches of 20: `run()` without a file equals `iterate()`; stopped after 2 batches,
+   restored by a fresh start and stopped after 2 more (extra state, here a list of batch ends, restored), a half-written
+   `.tmp` left behind, then finished: regrets, strategy sums and averaged strategy equal the uninterrupted run bit for
+   bit; an old-format checkpoint written by hand at iteration 100 is converted and finished with the same result.
 
 ## Status of the runs (read this)
 

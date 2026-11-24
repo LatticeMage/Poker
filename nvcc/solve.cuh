@@ -149,6 +149,28 @@ static GameTree build_ladder_tree(double stack, const Levels& open_levels, const
 	return t;
 }
 
+// The push/fold tree: the small blind folds or shoves everything, the big blind folds or calls. Nodes in
+// the order the solver numbers them: 0 root (SB: fold, allin), 1 SB fold, 2 BB decision "allin" (fold, call),
+// 3 BB fold, 4 showdown with both all-in (raw equity). It is the ladder tree without limp and without any
+// raise size, so the payoffs are those of every other tree: the folds and the all-in showdown are the
+// same nodes, and the stack is the effective stack in bb counted from the blinds' first chip.
+static GameTree build_pushfold_tree(double stack) {
+	GameTree t;
+	const int root = t.add(GNode());
+	t.nodes[root].id = "root";
+	t.nodes[root].player = 0;
+	GNode f;
+	f.kind = FOLD;
+	f.player = 0;
+	f.c0 = 0.5;
+	f.c1 = 1;
+	std::vector<int> child = {t.add(f)};
+	child.push_back(build_facing(t, "allin", {1}, 1, 1, stack, Levels(), 1, stack));
+	t.nodes[root].labels = {"fold", "allin"};
+	t.nodes[root].child = child;
+	return t;
+}
+
 // The tree of the external solver poker-cfr (BSD-2, game_preflop.rs): every raise is a multiple of the bet
 // faced (2.5x, 3x, 3.5x, 4x, capped at the stack) plus an all-in; the action numbering is the same
 // (0 fold, 1 call or check, 2.. raises), so strategies can be compared node by node. The big blind may also

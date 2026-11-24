@@ -13,8 +13,9 @@
 //   · Persona / style adjustments grow or shrink any range along the same order.
 //   · Heads-up has no source; it falls back to the widest chart found (62%). Real heads-up opens
 //     are wider.
-//   · Heads-up push/fold ranges for 2–20bb stacks come from an offline fictitious-play
-//     approximation of the equilibrium (tools/make_tables.py), stored in data/tables.json.
+//   · Heads-up push/fold ranges for 2–20bb stacks come from an offline CFR+ solution of the
+//     equilibrium on the exact equity matrix (nvcc/pushfold.cu, copied in by tools/apply-pushfold.ts),
+//     stored in data/tables.json.
 //
 // Percentages are shares of the 1326 two-card combos: pairs 6, suited 4, offsuit 12.
 

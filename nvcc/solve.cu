@@ -11,7 +11,9 @@
 //   --tree ladder     the tree of tools/solve-preflop.ts (default); --open "2.5,9,22" and --limp "4,12" are its
 //                     raise ladders ("," between raises, "/" between alternative sizes of one raise)
 //   --tree mult       the tree of the external solver poker-cfr: raises of 2.5x, 3x, 3.5x, 4x the bet faced
-//   --ckpt PREFIX     save PREFIX.ckpt every --ckpt-every iterations (default 5000) and resume from it
+//   --tree pushfold   the push/fold tree: the small blind folds or shoves, the big blind folds or calls (pushfold.cu
+//                     builds the app's push/fold tables on top of it)
+//   --ckpt PREFIX    save PREFIX.ckpt every --ckpt-every iterations (default 5000) and resume from it
 //   --report N        print the exploitability every N iterations (default iters / 5)
 //   --samples N       value written to samples_per_matchup (0 = exact matrix)
 
@@ -77,8 +79,9 @@ int main(int argc, char** argv) {
 	std::vector<GameTree> trees;
 	for (const std::string& s : split(stacks, ',')) {
 		sizes.push_back(atof(s.c_str()));
-		trees.push_back(tree == "mult" ? build_mult_tree(sizes.back())
-		                               : build_ladder_tree(sizes.back(), parse_levels(open), parse_levels(limp)));
+		trees.push_back(tree == "mult"       ? build_mult_tree(sizes.back())
+		                : tree == "pushfold" ? build_pushfold_tree(sizes.back())
+		                                     : build_ladder_tree(sizes.back(), parse_levels(open), parse_levels(limp)));
 	}
 	Solver sv(pb, trees);
 	printf("%zu trees, %d nodes, %d action slots, %d levels, %s\n", trees.size(), sv.G, sv.S, sv.nlevels(),

@@ -255,7 +255,8 @@ static inline int flop_wetness(const Flop& f) {
 		span = std::min(span, *std::max_element(l.begin(), l.end()) - *std::min_element(l.begin(), l.end()));
 	}
 	const int flush_pts = f.suit_kind == 2 ? 2 : (f.suit_kind == 1 ? 1 : 0);
-	const int straight_pts = span <= 2 ? 2 : (span <= 4 ? 1 : 0);
+	// one distinct rank (trips): no straight draw at all, however "tight" a span of 0 looks
+	const int straight_pts = d.size() < 2 ? 0 : (span <= 2 ? 2 : (span <= 4 ? 1 : 0));
 	return flush_pts + straight_pts;
 }
 static inline const char* flop_wetness_name(int w) {

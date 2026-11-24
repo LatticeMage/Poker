@@ -120,6 +120,10 @@ int main() {
 			                                  flop_group_name(x, depth).find("濕") == std::string::npos;
 		check(names_clean, "no group name carries dry or wet: they are results, not categories");
 		check(dry && flop_wetness(*dry) == 0, "K-7-2 rainbow is dry (wetness 0)");
+		bool trips_dry = true;
+		for (const Flop& x : f)
+			if (x.trips) trips_dry = trips_dry && flop_wetness(x) == 0;
+		check(trips_dry, "trips boards (one rank, no draws of any kind) are dry");
 		check(wettest && flop_wetness(*wettest) == 4, "a tight monotone board is the wettest (wetness 4)");
 		check(paired_wet != nullptr, "a paired board with a flush draw and a tight straight structure is wet (>= 3)");
 		int wc[5] = {0, 0, 0, 0, 0};

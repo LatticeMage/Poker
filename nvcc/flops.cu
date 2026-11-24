@@ -23,10 +23,14 @@ static const char* pairing(const Flop& f) { return f.trips ? "trips" : (f.paired
 int main(int argc, char** argv) {
 	const std::vector<Flop>& all = all_flops();
 	if (argc >= 2 && strcmp(argv[1], "list") == 0) {
-		printf("index,flop,weight,suits,pairing,broadway,high,span,wetness\n");
+		printf("index,flop,weight,suits,pairing,broadway,high,span,wetness,share,types,flush,straight,flush_draw,open_ended,gutshot\n");
 		for (const Flop& f : all)
-			printf("%d,%s,%d,%s,%s,%d,%c,%d,%s\n", f.index, flop_name(f).c_str(), f.weight, SUIT_KIND[f.suit_kind], pairing(f),
-			       flop_broadway(f), RANKS[f.high], flop_span_ace_low(f), flop_wetness_name(flop_wetness(f)));
+			{
+				const FlopWetness w = flop_wetness_detail(f);
+				printf("%d,%s,%d,%s,%s,%d,%c,%d,%s,%.4f,%d,%d,%d,%d,%d,%d\n", f.index, flop_name(f).c_str(), f.weight, SUIT_KIND[f.suit_kind], pairing(f),
+				       flop_broadway(f), RANKS[f.high], flop_span_ace_low(f), flop_wetness_name(flop_wetness(f)), w.share, w.types, w.count[0], w.count[1],
+				       w.count[2], w.count[3], w.count[4]);
+			}
 		return 0;
 	}
 	if (argc >= 3 && strcmp(argv[1], "partition") == 0) {

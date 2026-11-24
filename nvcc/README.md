@@ -13,14 +13,21 @@ them; it only reads the results.
 
 ## Files
 
-| File        | What it is                                                                                                                              |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `equity.cu` | The whole program: one fused kernel (deal, score both hands, count wins), exact enumeration, and a self test with a slow host reference |
+Each tool is a `.cu` program; code shared by tools lives in a `.cuh`; the checks for a tool are in its own
+`test_<tool>.cu`. New offline tools follow the same layout.
+
+| File             | What it is                                                                         |
+| ---------------- | ---------------------------------------------------------------------------------- |
+| `poker.cuh`      | Shared: card encoding, the 7-card evaluator `eval7`, the RNG, the 169 hand classes |
+| `equity.cu`      | The 169×169 equity matrix: sampled or exact (no checks inside)                     |
+| `test_equity.cu` | Checks for it: GPU evaluator vs a slow host reference, and the class tables        |
 
 ## Build
 
 ```bash
-/usr/local/cuda/bin/nvcc -O3 -arch=sm_89 -o equity equity.cu
+NVCC=/usr/local/cuda/bin/nvcc
+$NVCC -O3 -arch=sm_89 -o equity equity.cu
+$NVCC -O3 -arch=sm_89 -o test_equity test_equity.cu
 ```
 
 ## Use
@@ -30,7 +37,6 @@ them; it only reads the results.
 ./equity matrix 1000000 out.bin       # all 14,196 matchups by sampling, 1,000,000 samples each
 ./equity exact out.bin                # all matchups by full enumeration (no noise)
 ./equity exact out.bin AKs QQ         # one matchup, exact
-./equity selftest                     # check the GPU evaluator (see Check)
 ```
 
 `out.bin` is 169×169 float64, row-major. `out[i*169 + j]` is the share of the pot class `i` wins against
@@ -42,13 +48,17 @@ Read it in Python with `numpy.fromfile('out.bin', dtype=numpy.float64).reshape(1
 ## Check
 
 ```bash
-./equity selftest [deals]             # default 200,000 deals
+./test_equity [deals]                 # default 200,000 deals per batch
 ```
 
-It deals random showdowns, decides the winner on the GPU and with a slow, independent host reference (best
-of the 21 five-card subsets, ranked by sorting rank groups), and prints the mismatches. The second batch
-draws from a 32-card deck (A and 2 to 8) so that quads, full houses and straight flushes are common.
-Expected: 0 mismatches. The exit code is 1 otherwise. Run it after any change to the evaluator.
+1. **Evaluator.** It deals random showdowns, decides the winner on the GPU and with a slow, independent host
+   reference (best of the 21 five-card subsets, ranked by sorting rank groups), and counts mismatches. The
+   second batch draws from a 32-card deck (A and 2 to 8) so that quads, full houses and straight flushes are
+   common.
+2. **Class tables.** 169 classes in `ranges.ts` order, 1326 distinct combos, 6 / 4 / 12 per pair / suited /
+   offsuit class.
+
+It prints `PASS` and exits 0, otherwise `FAIL` and exits 1. Run it after any change to `poker.cuh`.
 
 ## How it works
 

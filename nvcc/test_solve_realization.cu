@@ -10,7 +10,7 @@
 // 3. Depth: interpolation between table depths, towards 1 with nothing behind, flat beyond the deepest; the
 //    out-of-range cap.
 // 4. The GPU values a profile with the table's matrices as a host enumeration does (uniform play, all stacks).
-// 5. Solved runs with the table on (5 to 150 bb): frequencies sum to 1, exploitability below a bound,
+// 5. Solved runs with the table on, each out-of-range rule (5 to 150 bb): frequencies sum to 1, exploitability below a bound,
 //    zero-sum, best response >= value; a table of ones solves like raw equity; short stacks stay finite.
 // 6. Option off: the old formula reproduces the numbers of the TypeScript solver (same as test_solve.cu).
 
@@ -46,7 +46,7 @@ static RealTable flat_table(double v) {
 		RealTable::Pot pot;
 		pot.name = names[p];
 		pot.c = c[p];
-		for (int s = 0; s < 2; s++) pot.inrange[s].assign(NCLASS, 0);
+		for (int s = 0; s < 2; s++) pot.inrange[s].assign(NCLASS, 1);
 		for (double d : depths[p]) {
 			RealTable::Depth dp;
 			dp.depth = d;
@@ -169,7 +169,7 @@ static void test_depth() {
 	RealTable t = flat_table(1.0);
 	// class 0 (AA) in range for IP in srp, factors 1.2 at 20 bb and 1.4 at 40 bb; class 1 out of range, 1.5 / 1.6
 	RealTable::Pot& srp = t.pots[0];
-	srp.inrange[0][0] = 1;
+	srp.inrange[0][1] = 0;  // class 0 stays in range
 	srp.depths[0].factor[0][0] = 1.2;
 	srp.depths[1].factor[0][0] = 1.4;
 	srp.depths[0].factor[0][1] = 1.5;
@@ -188,6 +188,7 @@ static void test_depth() {
 	check(std::fabs(at(150, OUT_CAP, 0) - at(100, OUT_CAP, 0)) < 1e-12, "150 bb: the deepest table depth, no extrapolation");
 	check(std::fabs(at(40, OUT_CAP, 1) - 1.1) < 1e-12 && std::fabs(at(20, OUT_CAP, 1) - 1.1) < 1e-12, "out of range, cap: min(table, range factor)");
 	check(std::fabs(at(40, OUT_NONE, 1) - 1.6) < 1e-12, "out of range, none: the table value");
+	check(RealOptions().out == OUT_FORMULA && RealOptions().limp == LIMP_FORMULA, "defaults: out-of-range classes and limped pots keep the old formula");
 	t.factors(0, 0, 37.5, OUT_FORMULA, f, fm);
 	check(fm[1] == 1 && fm[0] == 0, "out of range, formula: the class is flagged, in-range ones are not");
 }
@@ -257,14 +258,17 @@ static void test_gpu_values(const Problem& base, const std::vector<double>& eq) 
 }
 
 // -- 5. solved runs -------------------------------------------------------------------------------
-static void test_solved(const Problem& base, const std::vector<double>& eq) {
-	printf("solved with the table (5 to 150 bb, 3000 iterations)\n");
+static void test_solved(const Problem& base, const std::vector<double>& eq, int mode) {
+	static const char* NAMES[3] = {"cap", "formula (default)", "none"};
+	printf("solved with the table, out-of-range classes: %s (5 to 150 bb, 3000 iterations)\n", NAMES[mode]);
 	const RealTable tab = RealTable::load(g_realization_path());
 	Problem pb = base;
 	std::vector<GameTree> trees;
 	const double stacks[11] = {5, 10, 15, 20, 30, 40, 50, 60, 80, 100, 150};
 	for (double s : stacks) trees.push_back(build_ladder_tree(s, OPEN, LIMP));
-	const int sets = apply_realisation(pb, eq, trees, tab, RealOptions());
+	RealOptions ro;
+	ro.out = mode;
+	const int sets = apply_realisation(pb, eq, trees, tab, ro);
 	printf("       %d matrix sets\n", sets);
 	Solver sv(pb, trees);
 	sv.iterate(3000);
@@ -359,7 +363,7 @@ int main(int argc, char** argv) {
 	test_depth();
 	test_gpu_values(pb, eq);
 	test_flat(eq);
-	test_solved(pb, eq);
+	for (int mode : {OUT_FORMULA, OUT_CAP, OUT_NONE}) test_solved(pb, eq, mode);
 	test_off(pb);
 	printf(g_fail ? "FAIL (%d)\n" : "PASS\n", g_fail);
 	return g_fail ? 1 : 0;

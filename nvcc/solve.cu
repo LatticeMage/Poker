@@ -10,7 +10,7 @@
 //   --raw             no realised-equity heuristic: every call is a showdown on raw equity
 //   --real FILE       value calls that see a flop with the realisation table (data/realization.json) instead
 //                     of the formula (solve_realization.cuh says how); the JSON gets a "realisation" field
-//   --real-out MODE   classes outside the table's ranges: cap (default), formula, none
+//   --real-out MODE   classes outside the table's ranges: formula (default), cap, none
 //   --real-limp MODE  limped pots (no data): formula (default) or srp (borrow the single-raised factors)
 //   --tree ladder     the tree of tools/solve-preflop.ts (default); --open "2.5,9,22" and --limp "4,12" are its
 //                     raise ladders ("," between raises, "/" between alternative sizes of one raise)
@@ -50,7 +50,7 @@ static double seconds_since(std::chrono::steady_clock::time_point t0) {
 
 int main(int argc, char** argv) {
 	std::string matrix = "data/equity-exact.bin", stacks = "10,20,40,80", out = "out", prefix = "headsup", suffix;
-	std::string tree = "ladder", open = "2.5,9,22", limp = "4,12", ckpt, real, real_out = "cap", real_limp = "formula";
+	std::string tree = "ladder", open = "2.5,9,22", limp = "4,12", ckpt, real, real_out = "formula", real_limp = "formula";
 	long long iters = 4000, ckpt_every = 5000, report = 0, samples = 0;
 	bool raw = false;
 	for (int i = 1; i < argc; i++) {

@@ -29,10 +29,14 @@
 //    that matchup; and the average over a range of the matchup shares is not the table's range factor.
 //
 // 4. Classes outside the range the table was made with (the ranges are the 6-max charts at 100 bb; the
-//    table says which classes those are) have inflated factors, up to 1.7. `out = OUT_CAP` (default)
-//    limits their factor to the equity-weighted factor of the side's whole range at that depth (an
-//    out-of-range hand realises at most like an average hand of the range). `OUT_FORMULA` gives them the
-//    old formula instead, in every matchup; `OUT_NONE` takes the table as it is (sensitivity run only).
+//    table says which classes those are) have inflated factors, up to 1.7, and the solver mostly plays
+//    exactly such hands at the edge of a range, so this choice moves the result more than anything else
+//    (measured in the README: the big blind's defence of a 2.5 open at 100 bb is 82% with the old formula,
+//    84% with `OUT_FORMULA`, 90% with `OUT_CAP`, 100% with `OUT_NONE`).
+//    `OUT_FORMULA` (default): these classes keep the old formula in every matchup, so the table only speaks
+//    where it was measured. `OUT_CAP` limits their factor to the equity-weighted factor of the side's whole
+//    range at that depth (an out-of-range hand realises at most like an average hand of the range).
+//    `OUT_NONE` takes the table as it is (a sensitivity run only: it makes the big blind defend every hand).
 #pragma once
 
 #include <map>
@@ -45,7 +49,7 @@ enum RealOut { OUT_CAP = 0, OUT_FORMULA = 1, OUT_NONE = 2 };
 enum RealLimp { LIMP_FORMULA = 0, LIMP_SRP = 1 };
 
 struct RealOptions {
-	int out = OUT_CAP;
+	int out = OUT_FORMULA;
 	int limp = LIMP_FORMULA;
 	std::string describe() const {
 		static const char* O[3] = {"cap", "formula", "none"};

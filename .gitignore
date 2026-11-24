@@ -29,3 +29,6 @@ vite.config.ts.timestamp-*
 application-*.js
 application-*.css
 tools/.cache
+
+# external repos cloned for reference
+.tmp

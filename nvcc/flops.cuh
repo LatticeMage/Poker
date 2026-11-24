@@ -241,7 +241,8 @@ static inline int flop_span_ace_low(const Flop& f) {
 // How many draws a board offers. Points from the flush side (rainbow 0, two-tone 1, monotone 2) and from the straight
 // side, measured on the DISTINCT ranks of the board with the ace both high and low (span <= 2: 2 points; 3-4: 1; else 0).
 // A paired board has only two distinct ranks, so its straight side is the span of those two (98x9 is tight), and a
-// paired board with a flush draw and a straight draw is wet. 0 = 乾, 1 = 偏乾, 2 = 中, 3 = 濕, 4 = 很濕.
+// paired board with a flush draw and a straight draw is wet. Trips are medium (2) by definition. 0 = 乾, 1 = 偏乾, 2 = 中,
+// 3 = 濕, 4 = 很濕.
 static inline int flop_wetness(const Flop& f) {
 	int r[3] = {f.cards[0] >> 2, f.cards[1] >> 2, f.cards[2] >> 2};
 	std::sort(r, r + 3);
@@ -255,8 +256,8 @@ static inline int flop_wetness(const Flop& f) {
 		span = std::min(span, *std::max_element(l.begin(), l.end()) - *std::min_element(l.begin(), l.end()));
 	}
 	const int flush_pts = f.suit_kind == 2 ? 2 : (f.suit_kind == 1 ? 1 : 0);
-	// one distinct rank (trips): no straight draw at all, however "tight" a span of 0 looks
-	const int straight_pts = d.size() < 2 ? 0 : (span <= 2 ? 2 : (span <= 4 ? 1 : 0));
+	if (d.size() < 2) return 2;  // trips: medium by definition (the board is static, there is no draw to speak of, but it is not dry either)
+	const int straight_pts = span <= 2 ? 2 : (span <= 4 ? 1 : 0);
 	return flush_pts + straight_pts;
 }
 static inline const char* flop_wetness_name(int w) {

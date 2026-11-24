@@ -100,52 +100,61 @@ int main() {
 		check(distinct.size() == 184, "the 184 group names are different");
 	}
 
-	// wetness is a result, not a category: no group name contains it, and it behaves as it should
+	// wetness is a result, not a category: it is counted over the 1,176 hole-card hands of each flop
 	{
-		// rainbow, far apart ranks: dry. monotone and tight: the wettest. paired with a flush draw and tight ranks: wet.
-		const Flop* dry = nullptr;
-		for (const Flop& x : f) {
-			const int r0 = x.cards[0] >> 2, r1 = x.cards[1] >> 2, r2 = x.cards[2] >> 2;
-			if (!dry && x.suit_kind == 0 && r2 == 11 && r1 == 5 && r0 == 0) dry = &x;  // ranks K, 7, 2 in three suits
-		}
-		const Flop* wettest = nullptr;
-		const Flop* paired_wet = nullptr;
-		for (const Flop& x : f) {
-			if (!wettest && x.suit_kind == 2 && flop_span_ace_low(x) <= 2 && !x.paired) wettest = &x;
-			if (!paired_wet && x.paired && !x.trips && x.suit_kind == 1 && flop_wetness(x) >= 3) paired_wet = &x;
-		}
 		bool names_clean = true;
 		for (int depth = 1; depth <= 6; depth++)
 			for (const Flop& x : f) names_clean = names_clean && flop_group_name(x, depth).find("乾") == std::string::npos &&
 			                                  flop_group_name(x, depth).find("濕") == std::string::npos;
 		check(names_clean, "no group name carries dry or wet: they are results, not categories");
-		check(dry && flop_wetness(*dry) == 0, "K-7-2 rainbow is dry (wetness 0)");
-		bool trips_medium = true;
-		for (const Flop& x : f)
-			if (x.trips) trips_medium = trips_medium && flop_wetness(x) == 2;
-		check(trips_medium, "trips boards are medium (wetness 2), by definition");
-		check(wettest && flop_wetness(*wettest) == 4, "a tight monotone board is the wettest (wetness 4)");
-		check(paired_wet != nullptr, "a paired board with a flush draw and a tight straight structure is wet (>= 3)");
+
+		const Flop* dry = nullptr;
+		const Flop* mono_tight = nullptr;
+		const Flop* mono_far = nullptr;
+		for (const Flop& x : f) {
+			const int r0 = x.cards[0] >> 2, r1 = x.cards[1] >> 2, r2 = x.cards[2] >> 2;
+			if (!dry && x.suit_kind == 0 && r2 == 11 && r1 == 5 && r0 == 0) dry = &x;  // K, 7, 2 in three suits
+			if (!mono_tight && x.suit_kind == 2 && r2 == 7 && r1 == 6 && r0 == 5) mono_tight = &x;  // 9, 8, 7 in one suit
+			if (!mono_far && x.suit_kind == 2 && r2 == 11 && r1 == 5 && r0 == 0) mono_far = &x;  // K, 7, 2 in one suit
+		}
+		check(dry && mono_tight && mono_far, "found K72 rainbow, 987 monotone, K72 monotone");
+		FlopWetness d = flop_wetness_detail(*dry), m = flop_wetness_detail(*mono_tight), mf = flop_wetness_detail(*mono_far);
+		// by hand, K72 rainbow: no suit has four cards and no five ranks can be in a row, so no flush, straight or draw of any kind
+		check(d.count[0] == 0 && d.count[1] == 0 && d.count[2] == 0 && d.count[3] == 0 && d.count[4] == 0 && d.share == 0,
+		      "K72 rainbow: no hand makes a flush, a straight or any draw (counted: 0 of 1,176)");
+		// by hand, a monotone board: 10 cards of the suit are left. A flush needs both hole cards in it: C(10,2) = 45 hands.
+		// A flush draw (four of the suit) needs exactly one: 10 * 39 = 390 hands. Three of the suit in hand cannot happen (2 cards).
+		check(mf.count[0] == 45 && mf.count[2] == 390, "monotone board: 45 hands make a flush and 390 have a flush draw (C(10,2) and 10 x 39, counted by hand)");
+		check(m.count[0] == 45 && m.count[2] == 390 && m.count[3] > 0 && m.count[1] > 0, "987 monotone: the same flush counts, and also open-ended draws and made straights");
+		check(m.share > mf.share && mf.share > d.share, "wetness order: 987 monotone > K72 monotone > K72 rainbow");
+		check(flop_wetness(*dry) == 0 && flop_wetness(*mono_tight) == 4, "K72 rainbow is dry (0), 987 monotone is very wet (4)");
+		check(m.types == 5 && mf.types == 2 && d.types == 0, "types that occur: 987 monotone 5 (flush, straight, FD, OESD, GUT), K72 monotone 2 (flush, FD), K72 rainbow 0 (its 198 backdoor flush draws are not a type)");
+
 		int wc[5] = {0, 0, 0, 0, 0};
 		for (const Flop& x : f) wc[flop_wetness(x)] += x.weight;
 		check(wc[0] > 0 && wc[4] > 0 && wc[0] + wc[1] + wc[2] + wc[3] + wc[4] == 22100, "all five wetness levels occur and cover the 22,100 flops");
 		printf("  (flops by wetness: dry %d, fairly dry %d, medium %d, wet %d, very wet %d)\n", wc[0], wc[1], wc[2], wc[3], wc[4]);
 	}
 
-	// the dry-wet spectrum of the 184 (or 182) groups: a result placed on the groups after the classification
+	// the dry-wet spectrum of the natural groups: a result placed on the groups after the classification
 	{
-		FlopTaxonomy t = flop_taxonomy(182);
+		FlopTaxonomy t = flop_taxonomy(0);
 		double lo = 99, hi = -1;
 		bool in_range = t.wetness.size() == t.name.size();
 		for (double w : t.wetness) { lo = std::min(lo, w); hi = std::max(hi, w); in_range = in_range && w >= 0 && w <= 4; }
 		check(in_range && lo < 0.5 && hi > 3.0, "the groups spread over the dry-wet spectrum (driest below 0.5, wettest above 3)");
-		// a rainbow group with far-apart ranks is drier than a monotone group with tight ranks
-		double rb = -1, mono = -1;
+		// by the mathematics: a straight draw needs four of the five cards inside one window of five ranks, so with two hole cards
+		// the board needs two cards within a gap of 4. A rainbow board whose cards are all 5 or more apart has no flush, no straight
+		// and no draw of any kind: every such group must be exactly dry (wetness 0). A monotone tight board is the wettest.
+		bool far_dry = true;
+		int far_groups = 0;
+		double mono = 99;
 		for (size_t g = 0; g < t.name.size(); g++) {
-			if (t.name[g].find("彩虹") != std::string::npos && t.name[g].find("順遠") != std::string::npos) rb = std::max(rb, t.wetness[g]);
-			if (t.name[g].find("單色") != std::string::npos && t.name[g].find("順緊") != std::string::npos) mono = std::max(mono, t.wetness[g]);
+			if (t.name[g].find("彩虹") != std::string::npos && t.name[g].find("順遠") != std::string::npos) { far_groups++; far_dry = far_dry && t.wetness[g] == 0.0; }
+			if (t.name[g].find("單色") != std::string::npos && t.name[g].find("順緊") != std::string::npos) mono = std::min(mono, t.wetness[g]);
 		}
-		check(rb >= 0 && mono >= 0 && rb < 1.0 && mono > 3.0, "rainbow far-apart groups sit at the dry end (< 1), monotone tight groups at the wet end (> 3)");
+		check(far_groups > 0 && far_dry, "every rainbow far-apart (all gaps >= 5) group is exactly dry: no flush, no straight, no draw (counted)");
+		check(mono >= 3.5, "monotone tight groups are at the wet end (>= 3.5)");
 		// a group's wetness is the weighted mean of its members': the weighted mean over all groups equals the mean over all flops
 		double lhs = 0, rhs = 0;
 		for (size_t g = 0; g < t.name.size(); g++) lhs += t.wetness[g] * t.rep[g].weight;

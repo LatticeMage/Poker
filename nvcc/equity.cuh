@@ -6,7 +6,7 @@
 // Exact: every non-conflicting pair of combos on every one of the C(48,5) boards.
 #pragma once
 
-#include "poker.cuh"
+#include "dispatch.cuh"
 
 __global__ void matchup_kernel(const int2* pairs, int per_thread, uint64_t seed, unsigned long long* wins2,
                                unsigned long long* valid) {
@@ -108,9 +108,11 @@ __global__ void exact_kernel(const uint32_t* jobs, const int2* pairs, uint64_t f
 static const int BLOCK = 256;
 static const int BLOCKS_PER_PAIR = 64;
 
-// Runs `pairs` for about `samples` samples each; returns equity per pair and valid counts.
+// Runs `pairs` for about `samples` samples each (in batches of `pairs_per_batch` pairs); returns equity per pair and
+// valid counts. Every launch goes through dispatch(), which checks the GPU temperature first.
 static inline void run_pairs(const std::vector<int2>& pairs, long long samples, uint64_t seed, std::vector<double>& eq,
-                      std::vector<unsigned long long>& valid_out) {
+                             std::vector<unsigned long long>& valid_out, bool verbose = false,
+                             uint64_t pairs_per_batch = 256) {
 	const int P = (int)pairs.size();
 	const int per_thread = (int)((samples + (long long)BLOCKS_PER_PAIR * BLOCK - 1) / ((long long)BLOCKS_PER_PAIR * BLOCK));
 	int2* d_pairs;
@@ -121,10 +123,10 @@ static inline void run_pairs(const std::vector<int2>& pairs, long long samples, 
 	CK(cudaMemcpy(d_pairs, pairs.data(), P * sizeof(int2), cudaMemcpyHostToDevice));
 	CK(cudaMemset(d_w, 0, P * sizeof(unsigned long long)));
 	CK(cudaMemset(d_v, 0, P * sizeof(unsigned long long)));
-	dim3 grid(BLOCKS_PER_PAIR, P);
-	matchup_kernel<<<grid, BLOCK>>>(d_pairs, per_thread, seed, d_w, d_v);
-	CK(cudaGetLastError());
-	CK(cudaDeviceSynchronize());
+	dispatch(P, pairs_per_batch, [&](uint64_t first, uint64_t count) {
+		dim3 grid(BLOCKS_PER_PAIR, (unsigned)count);
+		matchup_kernel<<<grid, BLOCK>>>(d_pairs + first, per_thread, seed, d_w + first, d_v + first);
+	}, "pairs", verbose);
 	std::vector<unsigned long long> w(P), v(P);
 	CK(cudaMemcpy(w.data(), d_w, P * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
 	CK(cudaMemcpy(v.data(), d_v, P * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
@@ -174,21 +176,10 @@ static inline void exact_pairs(const std::vector<int2>& pairs, std::vector<doubl
 	CK(cudaMemcpy(d_jobs, jobs.data(), jobs.size() * 4, cudaMemcpyHostToDevice));
 	CK(cudaMemcpy(d_pairs, pairs.data(), pairs.size() * sizeof(int2), cudaMemcpyHostToDevice));
 	CK(cudaMemset(d_w, 0, pairs.size() * 8));
-	const uint64_t BATCH = 32768;  // jobs per launch
-	auto t0 = std::chrono::steady_clock::now();
-	for (uint64_t first = 0; first < jobs.size(); first += BATCH) {
-		uint64_t nj = std::min<uint64_t>(BATCH, jobs.size() - first);
+	dispatch(jobs.size(), 32768, [&](uint64_t first, uint64_t nj) {
 		uint64_t threads = nj * CHUNKS;
 		exact_kernel<<<(unsigned)((threads + 255) / 256), 256>>>(d_jobs, d_pairs, first, nj, d_w);
-		CK(cudaGetLastError());
-		CK(cudaDeviceSynchronize());
-		if (verbose) {
-			double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-			uint64_t done = first + nj;
-			printf("%llu/%zu jobs  %.1fs  eta %.0fs\n", (unsigned long long)done, jobs.size(), secs, secs / done * (jobs.size() - done));
-			fflush(stdout);
-		}
-	}
+	}, "jobs", verbose);
 	std::vector<unsigned long long> w(pairs.size());
 	CK(cudaMemcpy(w.data(), d_w, pairs.size() * 8, cudaMemcpyDeviceToHost));
 	cudaFree(d_jobs); cudaFree(d_pairs); cudaFree(d_w);

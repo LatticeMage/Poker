@@ -36,19 +36,8 @@ int main(int argc, char** argv) {
 		long long samples = atoll(argv[2]);
 		std::vector<int2> all = all_pairs();
 		std::vector<double> result;
-		const int PB = 256;
-		auto t0 = std::chrono::steady_clock::now();
-		for (size_t s = 0; s < all.size(); s += PB) {
-			std::vector<int2> chunk(all.begin() + s, all.begin() + std::min(all.size(), s + PB));
-			std::vector<double> eq;
-			std::vector<unsigned long long> v;
-			run_pairs(chunk, samples, 20261124, eq, v);
-			result.insert(result.end(), eq.begin(), eq.end());
-			double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-			size_t done = s + chunk.size();
-			printf("%zu/%zu pairs  %.1fs  eta %.1fs\n", done, all.size(), secs, secs / done * (all.size() - done));
-			fflush(stdout);
-		}
+		std::vector<unsigned long long> v;
+		run_pairs(all, samples, 20261124, result, v, true);
 		write_matrix(argv[3], all, result);
 	} else if (mode == "exact" && argc >= 3) {
 		std::vector<int2> pairs = argc >= 5 ? std::vector<int2>{make_int2(class_index(argv[3]), class_index(argv[4]))} : all_pairs();

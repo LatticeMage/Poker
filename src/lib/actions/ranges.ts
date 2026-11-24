@@ -74,6 +74,9 @@ export function loadBoard(q: BoardQuery): Promise<void> {
 	});
 }
 
+/** Stack depths with a solved heads-up tree (whatever data files are present). */
+export const headsUpStacks = charts.HEADS_UP_STACKS;
+
 export function loadHeadsUp(stackBb: number): Promise<void> {
 	if (rangeStore.headsUp[stackBb]) return Promise.resolve();
 	return load(() => {

@@ -10,6 +10,8 @@
 // 4. Numbers from the TypeScript solver (tools/solve-preflop.ts) on the same exact matrix: node set, reach
 //    and root frequencies, SB value, exploitability.
 // 5. The JSON text has the node keys and the schema fields of src/lib/poker/data/headsup-*.json.
+// 6. The relay: a run stopped and resumed (a new Solver each time, a half-written temp file left behind) equals an
+//    uninterrupted run bit for bit; a finished file restores the answer; a file for another total is ignored.
 
 #include "solve.cuh"
 
@@ -360,6 +362,69 @@ static void test_solved(const Problem& pb) {
 	}
 }
 
+// -- 6. the relay: an interrupted and resumed run equals an uninterrupted one, bit for bit ----------
+static bool same_bits(const std::vector<double>& a, const std::vector<double>& b) {
+	return a.size() == b.size() && memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0;
+}
+
+static void test_relay(const Problem& pb) {
+	printf("relay: 10 and 20 bb, 1500 iterations in batches of 250\n");
+	Levels open = {{2.5}, {9}, {22}}, limp = {{4}, {12}};
+	std::vector<GameTree> trees;
+	trees.push_back(build_ladder_tree(10, open, limp));
+	trees.push_back(build_ladder_tree(20, open, limp));
+	const char* path = "/tmp/test_solve_relay.ckpt";
+	remove(path);
+	std::vector<double> ref_r, ref_s, ref_avg;
+	{
+		Solver sv(pb, trees);  // reference: no relay, one go
+		sv.iterate(1500);
+		ref_r = sv.regrets();
+		ref_s = sv.sums();
+		ref_avg = sv.averaged();
+	}
+	{
+		Solver sv(pb, trees);  // run() in batches changes nothing
+		sv.run(1500, "", 250);
+		check(same_bits(sv.regrets(), ref_r) && same_bits(sv.sums(), ref_s), "run() in batches without a file equals iterate()");
+	}
+	{
+		Solver a(pb, trees);  // stopped after 2 batches (a clean eviction)
+		a.run(1500, path, 250, nullptr, 2);
+		check(a.done == 500 && relay_peek_done(path) == 500, "stopped after 2 batches: the file holds 500 iterations");
+	}
+	{
+		Solver b(pb, trees);  // a new process: restores 500 and goes on, stopped again after 3 more
+		b.run(1500, path, 250, nullptr, 3);
+		check(b.done == 1250 && relay_peek_done(path) == 1250, "second run restored 500 and saved 1250");
+	}
+	{
+		// a hard kill during a save leaves a half-written .tmp next to the good file: it must not matter
+		FILE* t = fopen((std::string(path) + ".tmp").c_str(), "wb");
+		fwrite("garbage", 1, 7, t);
+		fclose(t);
+		Solver c(pb, trees);
+		c.run(1500, path, 250);
+		check(c.done == 1500 && relay_peek_done(path) == 1500, "third run finished at 1500");
+		check(same_bits(c.regrets(), ref_r) && same_bits(c.sums(), ref_s), "regrets and strategy sums equal the uninterrupted run, bit for bit");
+		check(same_bits(c.averaged(), ref_avg), "the averaged strategy equals the uninterrupted run, bit for bit");
+	}
+	{
+		Solver d(pb, trees);  // a finished file: restored without launching anything
+		d.run(1500, path, 250);
+		check(d.done == 1500 && same_bits(d.regrets(), ref_r) && same_bits(d.sums(), ref_s), "a finished relay file restores the answer");
+	}
+	{
+		Solver e(pb, trees);  // another total is another problem: the file is not used
+		e.run(500, path, 250);
+		Solver f(pb, trees);
+		f.iterate(500);
+		check(same_bits(e.regrets(), f.regrets()), "a file made for 1500 iterations is not used for 500");
+	}
+	remove(path);
+	remove((std::string(path) + ".tmp").c_str());
+}
+
 int main(int argc, char** argv) {
 	setup_classes();
 	const char* path = argc > 1 ? argv[1] : "data/equity-exact.bin";
@@ -367,6 +432,7 @@ int main(int argc, char** argv) {
 	test_tiny();
 	test_reference(pb);
 	test_solved(pb);
+	test_relay(pb);
 	printf(g_fail ? "FAIL (%d)\n" : "PASS\n", g_fail);
 	return g_fail ? 1 : 0;
 }

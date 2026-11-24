@@ -9,6 +9,8 @@
 //   --tol X         stop early once the mixed exploitability of every stack is below X bb (default 1e-9)
 //   --report N      print the exploitability every N iterations (default iters / 10)
 //   --out FILE      the JSON of the tables (default data/out/pushfold.json)
+//   --ckpt FILE     the relay file: state saved after every batch, a rerun carries on (needs a fixed --iters: --tol is then ignored)
+//   --batch N       iterations per batch with --ckpt (default 1000)
 
 #include "pushfold.cuh"
 
@@ -35,7 +37,8 @@ static std::vector<double> parse_stacks(const std::string& s) {
 
 int main(int argc, char** argv) {
 	std::string matrix = "data/equity-exact.bin", stacks = "2-20", out = "data/out/pushfold.json";
-	long long iters = 200000, report = 0;
+	long long iters = 200000, report = 0, batch_cap = 1000;
+	std::string ckpt;
 	double tol = 1e-9;
 	for (int i = 1; i < argc; i++) {
 		std::string a = argv[i];
@@ -49,6 +52,8 @@ int main(int argc, char** argv) {
 		else if (a == "--tol") tol = atof(val().c_str());
 		else if (a == "--report") report = atoll(val().c_str());
 		else if (a == "--out") out = val();
+		else if (a == "--ckpt") ckpt = val();
+		else if (a == "--batch") batch_cap = atoll(val().c_str());
 		else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 1; }
 	}
 	if (report <= 0) report = std::max(1ll, iters / 10);
@@ -64,6 +69,19 @@ int main(int argc, char** argv) {
 	printf("%zu push/fold trees, %d nodes, exact matrix %s\n", trees.size(), sv.G, matrix.c_str());
 
 	auto t0 = std::chrono::steady_clock::now();
+	if (!ckpt.empty()) {  // relay: a fixed number of iterations, state saved after every batch
+		const long long batch = pick_batch(batch_cap, report);
+		if (relay_peek_done(ckpt) > 0) printf("relay file %s holds %llu of %lld iterations\n", ckpt.c_str(), (unsigned long long)relay_peek_done(ckpt), iters);
+		sv.run(iters, ckpt, batch, [&](long long done) {
+			if (done / report > (done - std::min(done, batch)) / report || done == iters) {
+				auto ex = sv.exploitability();
+				double worst = 0;
+				for (auto& e : ex) worst = std::max(worst, e.first + e.second);
+				printf("iter %lld  %.1fs  worst exploitability %.3e bb\n", done, seconds_since(t0), worst);
+				fflush(stdout);
+			}
+		});
+	}
 	while (sv.done < iters) {
 		sv.iterate(std::min(iters, (sv.done / report + 1) * report) - sv.done);
 		auto ex = sv.exploitability();

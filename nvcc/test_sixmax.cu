@@ -14,6 +14,8 @@
 //    every player's value, and the best-response value of three players (the best-response gap).
 // 4. A short real run: strategies sum to 1, frozen decisions never move, the result is bit-identical when
 //    run twice, the zero-sum defect is small, the JSON parses and agrees with the strategies.
+// 5. The relay: a run stopped and resumed (a new start each time, a half-written temp file left behind, an old-format
+//    checkpoint converted) equals an uninterrupted run bit for bit.
 
 #include "sixmax_run.cuh"
 
@@ -620,6 +622,88 @@ static void test_run(Solver6& sol, const Source& src) {
 	}
 }
 
+// -- 5. the relay -------------------------------------------------------------------------------------
+static bool same_bits6(const std::vector<double>& a, const std::vector<double>& b) {
+	return a.size() == b.size() && memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0;
+}
+
+static void test_relay(Solver6& sol, const Source& src) {
+	printf("5. the relay: 120 iterations in batches of 20, stopped and resumed\n");
+	const std::vector<Node6>& nodes = sol.nodes;
+	std::vector<bool> none(nodes.size(), false);
+	const size_t cnt = (size_t)sol.S * NPAD;
+	auto fresh = [&]() {  // what a new process starts from
+		sol.set_frozen(none);
+		sol.seed(init_sigma(nodes, sol.hn, sol.S, src, none, 0.02), 1.0);
+	};
+	fresh();
+	sol.iterate(120);
+	const std::vector<double> ref_r = sol.download(sol.d_regret, cnt), ref_s = sol.download(sol.d_sum, cnt);
+	const std::vector<double> ref_avg = sol.averaged();
+	// the caller's extra state: the list of batch ends seen (stands for the convergence points)
+	std::vector<long long> seen;
+	auto after = [&](long long d) { seen.push_back(d); };
+	auto save_x = [&](FILE* f) {
+		const uint64_t n = seen.size();
+		fwrite(&n, sizeof n, 1, f);
+		fwrite(seen.data(), sizeof(long long), n, f);
+	};
+	auto load_x = [&](FILE* f) {
+		uint64_t n = 0;
+		if (fread(&n, sizeof n, 1, f) != 1 || n > 1000) return false;
+		std::vector<long long> v(n);
+		if (fread(v.data(), sizeof(long long), n, f) != n) return false;
+		seen = v;
+		return true;
+	};
+	const char* path = "/tmp/test_sixmax_relay.ckpt";
+	remove(path);
+	fresh();
+	sol.run(120, "", 20);
+	check(same_bits6(sol.download(sol.d_regret, cnt), ref_r) && same_bits6(sol.download(sol.d_sum, cnt), ref_s),
+	      "run() in batches without a file equals iterate()");
+	fresh();
+	seen.clear();
+	sol.run(120, path, 20, after, save_x, load_x, 2);
+	check(sol.done == 40 && relay_peek_done(path) == 40, "stopped after 2 batches: the file holds 40 iterations");
+	fresh();  // a new process
+	seen.clear();
+	sol.run(120, path, 20, after, save_x, load_x, 2);
+	check(sol.done == 80 && relay_peek_done(path) == 80 && seen.size() == 4, "second run restored 40, did 2 more batches, extra state restored");
+	{
+		FILE* t = fopen((std::string(path) + ".tmp").c_str(), "wb");  // a hard kill during a save leaves this behind
+		fwrite("garbage", 1, 7, t);
+		fclose(t);
+	}
+	fresh();
+	seen.clear();
+	sol.run(120, path, 20, after, save_x, load_x);
+	check(sol.done == 120 && relay_peek_done(path) == 120, "third run finished at 120");
+	check(same_bits6(sol.download(sol.d_regret, cnt), ref_r) && same_bits6(sol.download(sol.d_sum, cnt), ref_s),
+	      "regrets and strategy sums equal the uninterrupted run, bit for bit");
+	check(same_bits6(sol.averaged(), ref_avg), "the averaged strategy equals the uninterrupted run, bit for bit");
+	check(seen.size() == 6 && seen[0] == 20 && seen[5] == 120, "the extra state (list of batch ends) is the same as in an uninterrupted run");
+	// an old-format checkpoint (the format before the relay) at iteration 100 is converted and finished
+	remove(path);
+	fresh();
+	sol.iterate(100);
+	{
+		const std::vector<double> r = sol.download(sol.d_regret, cnt), s = sol.download(sol.d_sum, cnt);
+		FILE* f = fopen(path, "wb");
+		long long hdr[4] = {0x36584d41583031ll, sol.G, sol.S, 100};
+		fwrite(hdr, sizeof hdr, 1, f);
+		fwrite(r.data(), sizeof(double), cnt, f);
+		fwrite(s.data(), sizeof(double), cnt, f);
+		fclose(f);
+	}
+	fresh();
+	sol.run(120, path, 20);
+	check(sol.done == 120 && same_bits6(sol.download(sol.d_regret, cnt), ref_r) && same_bits6(sol.download(sol.d_sum, cnt), ref_s),
+	      "an old-format checkpoint at 100 is converted and finished: same result, bit for bit");
+	remove(path);
+	remove((std::string(path) + ".tmp").c_str());
+}
+
 int main() {
 	setup_classes();
 	test_tiny();
@@ -634,6 +718,7 @@ int main() {
 	Solver6 sol(pb, nodes, std::vector<bool>(nodes.size(), false));
 	test_reference(sol, e3);
 	test_run(sol, src);
+	test_relay(sol, src);
 	printf("\n%s\n", g_fail ? "FAIL" : "PASS");
 	return g_fail ? 1 : 0;
 }

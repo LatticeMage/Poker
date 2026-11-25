@@ -1,3 +1,4 @@
+nvcc/data
 *.png
 *.jpg
 package-lock.json
@@ -38,3 +39,4 @@ tools/.cache
 
 # raw results of offline computation: local only, the website reads the JSON made from them
 nvcc/data/*.bin
+nvcc/data/flopsolve*/

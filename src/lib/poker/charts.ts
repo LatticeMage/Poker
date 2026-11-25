@@ -10,7 +10,6 @@ import type {
 	SpotChart,
 	SpotList
 } from '$lib/types/ranges';
-import type { Card } from './cards';
 import pushFoldMixData from './data/pushfold-mix.json';
 import { evaluate } from './evaluate';
 import { HEADS_UP_STACKS as SOLVED_STACKS, solvedChart } from './headsup';
@@ -20,7 +19,6 @@ import {
 	EQUITY_VS_RANDOM,
 	ORDER,
 	chartFor,
-	classCombos,
 	combos,
 	handOf,
 	percentile,
@@ -262,17 +260,6 @@ export function spotChart(kind: SpotChart['kind'], hero: string, villain: string
 const STREETS = { 3: 'flop', 4: 'turn', 5: 'river' } as const;
 const OPEN_INDEX: Record<string, number> = { UTG: 0, MP: 1, CO: 2, BTN: 3, SB: 4 }; // seats of a 6-player table
 
-/** Two cards from the range that avoid the board: the profile needs a hand even when none is given. */
-function anyTwo(board: readonly Card[], mine: postflop.Weighted): [Card, Card] {
-	for (const name of Object.keys(mine).sort()) {
-		for (const combo of classCombos(name)) {
-			if (!board.includes(combo[0]) && !board.includes(combo[1])) return [combo[0], combo[1]];
-		}
-	}
-	const free = Array.from({ length: 52 }, (_, i) => i).filter((c) => !board.includes(c));
-	return [free[0], free[1]];
-}
-
 const percentText = (x: number) => `${Math.round(x * 100)}%`;
 
 /** What the postflop model does with this hand (without the random mixing at the thresholds). */
@@ -311,29 +298,6 @@ function recommend(
 		'call',
 		`it is inside the top ${percentText(plan.defend)} of your range that must continue`
 	];
-}
-
-/**
- * How often a hand does each thing, as shares of [bet or raise for value, bluff, call]; the rest
- * checks or folds. The same rules as `recommend`, with the thresholds blurred by the jitter the
- * robots use, so a hand near a limit is split between the two actions instead of flipping.
- */
-function actionShares(
-	prof: postflop.Profile,
-	plan: postflop.Plan,
-	toCall: number
-): [number, number, number] {
-	const rank = postflop.rankIn(prof);
-	if (toCall <= 0) {
-		const value = postflop.below(rank, plan.value_cut);
-		// A bluff is a hand with no made hand among the best outside the value region.
-		const bluffs = prof.nopair ? postflop.bluffsAhead(prof, plan.value_cut) : Infinity;
-		const bluff = (1 - value) * (prof.nopair ? postflop.below(bluffs, plan.bluff_quota) : 0);
-		return [value, bluff, 0];
-	}
-	const continues = postflop.below(rank, plan.defend);
-	const raise = continues * postflop.below(rank, 0.1);
-	return [raise, 0, continues - raise];
 }
 
 /**
@@ -376,7 +340,7 @@ export function boardEquity(q: BoardQuery): BoardEquity {
 		q.view === 'mine'
 			? postflop.classEquities(board, mine, theirs)
 			: postflop.classEquities(board, theirs, mine);
-	const prof = postflop.profile(board, hole ?? anyTwo(board, mine), mine, theirs);
+	const prof = postflop.profile(board, hole ?? postflop.anyTwo(board, mine), mine, theirs);
 	const myCurve = postflop.equityCurve(board, mine, theirs);
 	const theirCurve = postflop.equityCurve(board, theirs, mine);
 	if (!grid || !prof || !myCurve || !theirCurve)
@@ -440,7 +404,8 @@ export function boardEquity(q: BoardQuery): BoardEquity {
 				range_eq_min: read.range_eq_min,
 				range_eq_max: read.range_eq_max,
 				nut_mine: read.nut_mine,
-				nut_theirs: read.nut_theirs
+				nut_theirs: read.nut_theirs,
+				solved: read.solved
 			}
 		},
 		unknown: {
@@ -457,7 +422,9 @@ export function boardEquity(q: BoardQuery): BoardEquity {
 			grid,
 			actions:
 				q.view === 'mine'
-					? (postflop.classActions(board, mine, theirs, (p) => actionShares(p, plan, toCall)) ?? {})
+					? (postflop.classActions(board, mine, theirs, (p) =>
+							postflop.actionShares(p, plan, toCall)
+						) ?? {})
 					: {}
 		},
 		known,
@@ -467,7 +434,7 @@ export function boardEquity(q: BoardQuery): BoardEquity {
 			bet_frequency: plan.frequency,
 			value_cut: plan.value_cut,
 			bluff_quota: plan.bluff_quota,
-			bluff_share_of_bets: postflop.bluffShare(plan.size)
+			bluff_share_of_bets: plan.frequency > 0 ? plan.bluff_quota / plan.frequency : 0
 		},
 		facing,
 		note:

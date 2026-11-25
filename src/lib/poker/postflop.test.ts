@@ -204,7 +204,7 @@ describe('the flop read', () => {
 			aggressor: true,
 			facing_raise: false
 		};
-		const read = postflop.flopRead('srp:BTN:BB', g.board, true)!;
+		const read = { ...postflop.flopRead('srp:BTN:BB', g.board, true)!, solved: null };
 		const strong = postflop.makePlan(prof, {
 			...base,
 			flop: { ...read, range_eq: 0.6, nut_mine: 0.3, nut_theirs: 0.1 }
@@ -214,6 +214,112 @@ describe('the flop read', () => {
 			flop: { ...read, range_eq: 0.45, nut_mine: 0.05, nut_theirs: 0.2 }
 		});
 		expect(strong.frequency).toBeGreaterThan(weak.frequency + 0.3);
+	});
+
+	it('where the flop is solved, the solved numbers make the plan', () => {
+		const { g, order } = toFlop(BTN_VS_BB);
+		const { prof } = profileFor(g, order, BTN, 'Ah Kd');
+		const read = postflop.flopRead('srp:BTN:BB', g.board, true)!;
+		const solved = {
+			bet33: 0.4,
+			bet66: 0.2,
+			value: 0.55,
+			fold33: 0.3,
+			raise33: 0.1,
+			fold66: 0.5,
+			raise66: 0.05
+		};
+		const base = { texture: 'dry' as const, aggressor: true, facing_raise: false };
+		const first = postflop.makePlan(prof, {
+			...base,
+			pot: 6,
+			to_call: 0,
+			flop: { ...read, solved }
+		});
+		expect(first.frequency).toBeCloseTo(0.6);
+		expect(first.size).toBe(postflop.SMALL_BET); // the size the range uses more
+		expect(first.value_cut).toBeCloseTo(0.6 * 0.55);
+		expect(first.bluff_quota).toBeCloseTo(0.6 * 0.45);
+		const big = postflop.makePlan(prof, {
+			...base,
+			pot: 6,
+			to_call: 0,
+			flop: { ...read, solved: { ...solved, bet33: 0.1, bet66: 0.3 } }
+		});
+		expect(big.size).toBe(postflop.BIG_BET);
+		// facing a bet: the solved folding share for that size, between the two sizes in proportion
+		expect(postflop.solvedFold(solved, 4 + 0.33 * 4, 0.33 * 4)).toBeCloseTo(0.3);
+		expect(postflop.solvedFold(solved, 4 + 0.66 * 4, 0.66 * 4)).toBeCloseTo(0.5);
+		expect(postflop.solvedFold(solved, 4 + 0.495 * 4, 0.495 * 4)).toBeCloseTo(0.4);
+		expect(postflop.solvedFold(solved, 4 + 2 * 4, 2 * 4)).toBeCloseTo(0.5); // beyond: the nearer size
+		const facing = postflop.makePlan(prof, {
+			...base,
+			pot: 4 + 0.66 * 4,
+			to_call: 0.66 * 4,
+			flop: { ...read, solved }
+		});
+		expect(facing.defend).toBeCloseTo(0.5);
+		// the real table: the button bets a dry ace-high flop often, the big blind folds more to the bigger bet
+		const bb = postflop.flopRead('srp:BTN:BB', g.board, false)!;
+		expect(read.solved).not.toBeNull();
+		expect(read.solved!.bet33 + read.solved!.bet66).toBeGreaterThan(0.4);
+		expect(read.solved!.bet33).toBeGreaterThan(read.solved!.bet66); // a third of the pot is the main size there
+		expect(bb.solved!.fold66).toBeGreaterThan(bb.solved!.fold33);
+		expect(bb.solved!.bet33 + bb.solved!.bet66).toBeLessThan(0.2); // the caller rarely leads
+		expect(postflop.flopRead('3bet:BTN:BB', g.board, true)!.solved).toBeNull(); // not solved yet: the rules
+	});
+});
+
+describe('more than two players: tightened ranges', () => {
+	it('the share comes from how the opening charts narrow', () => {
+		expect(postflop.potTightness(2)).toBe(1);
+		expect(postflop.potTightness(3)).toBeCloseTo(0.79, 1);
+		for (let n = 3; n <= 9; n++)
+			expect(postflop.potTightness(n)).toBeLessThan(postflop.potTightness(n - 1));
+		expect(postflop.potTightness(6)).toBeGreaterThan(0.15);
+	});
+
+	it('tightening keeps the strongest hands, by combos', () => {
+		const range = spots.vsOpen('BB', 'BTN')!.call;
+		const size = (r: postflop.Weighted) => postflop.rangeCombos(r, []);
+		expect(postflop.tighten(range, 1)).toBe(range);
+		const half = postflop.tighten(range, 0.5);
+		expect(size(half)).toBeCloseTo(0.5 * size(range), 6);
+		expect(half['99']).toBe(range['99']); // strong hands stay whole
+		expect(half['T8o']).toBeUndefined(); // the weakest go
+		for (const [h, w] of Object.entries(half)) expect(w).toBeLessThanOrEqual(range[h] + 1e-12);
+		const third = postflop.tighten(range, 1 / 3);
+		for (const h of Object.keys(third)) expect(half[h]).toBeGreaterThan(0); // nested
+	});
+
+	it('a three-way single-raised pot uses tightened ranges for every player', () => {
+		// CO opens, BTN and BB call
+		const { g, order } = toFlop([
+			[UTG, FOLD],
+			[HJ, FOLD],
+			[CO, raise(50)],
+			[BTN, CALL],
+			[SB, FOLD],
+			[BB, CALL]
+		]);
+		expect(postflop.headsUpRanges(g, order[CO], order)).toBeNull();
+		const share = postflop.potTightness(3);
+		const size = (r: postflop.Weighted) => postflop.rangeCombos(r, []);
+		const [mine, theirs, opened] = postflop.multiwayRanges(g, order[CO], order)!;
+		expect(opened).toBe(true);
+		const open = Object.fromEntries([...seatRange(6, CO).hands].map((h) => [h, 1]));
+		expect(size(mine)).toBeCloseTo(share * size(open), 6);
+		expect(mine['AA']).toBe(1);
+		// "they" are the two callers put together, tightened the same way
+		const btn = spots.vsOpen('BTN', 'CO')!.call;
+		const bb = spots.vsOpen('BB', 'CO')!.call;
+		expect(size(theirs)).toBeCloseTo((share * (size(btn) + size(bb))) / 2, 6);
+		const [m2, , o2] = postflop.multiwayRanges(g, order[BB], order)!;
+		expect(o2).toBe(false);
+		expect(size(m2)).toBeCloseTo(share * size(bb), 6);
+		// two players: no multiway model
+		const hu = toFlop(BTN_VS_BB);
+		expect(postflop.multiwayRanges(hu.g, hu.order[BTN], hu.order)).toBeNull();
 	});
 });
 

@@ -8,6 +8,7 @@
 -->
 
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { attempt, boardEquity, spotList as getSpotList } from '$lib/poker/lookup';
 	import { boardInputs as inputs } from '$lib/stores/boardEquity.svelte';
 	import type { BoardQuery } from '$lib/types/ranges';
@@ -283,6 +284,28 @@
 								>{pct(result.group.read.nut_theirs)}</span
 							>
 							of theirs.
+							{#if result.group.read.solved}
+								{@const sv = result.group.read.solved}
+								<span data-testid="flop-solved">
+									Solved for this group (flop betting, a real turn card, one round on the turn):
+									your range bets a third of the pot
+									<span class="font-semibold text-slate-200 tabular-nums">{pct(sv.bet33)}</span>,
+									two thirds
+									<span class="font-semibold text-slate-200 tabular-nums">{pct(sv.bet66)}</span>;
+									facing a third it folds
+									<span class="font-semibold text-slate-200 tabular-nums">{pct(sv.fold33)}</span>
+									and raises
+									<span class="font-semibold text-slate-200 tabular-nums">{pct(sv.raise33)}</span>,
+									facing two thirds it folds
+									<span class="font-semibold text-slate-200 tabular-nums">{pct(sv.fold66)}</span>.
+									The plan below uses these numbers.
+								</span>
+							{:else}
+								<span data-testid="flop-unsolved">
+									This matchup is not solved yet: the plan below comes from the range equity and the
+									nut hands.
+								</span>
+							{/if}
 						{/if}
 					</p>
 				</div>
@@ -476,6 +499,11 @@
 		{/if}
 	</div>
 </div>
+
+<p class="mt-4 text-sm text-slate-300">
+	<a class="underline" href={resolve('/learn/lines')}>Play this hand step by step →</a>
+	both ranges, equities and strategies after every action.
+</p>
 
 <style>
 	.legend-bar {

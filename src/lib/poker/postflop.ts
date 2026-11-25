@@ -27,8 +27,16 @@
 import type { GameState } from '$lib/types/game';
 import type { Card } from './cards';
 import { CATEGORY_UNIT, handScore } from './evaluate';
-import { type FlopGroup, flopGroup, groupLevels, groupStats, matchupKey } from './flopGroups';
-import { classCombos, seatRange } from './ranges';
+import {
+	type FlopGroup,
+	type GroupSolved,
+	flopGroup,
+	groupLevels,
+	groupSolved,
+	groupStats,
+	matchupKey
+} from './flopGroups';
+import { classCombos, combos as classSize, percent, percentile, seatRange } from './ranges';
 import { type Rng, crc32, mulberry32, sample } from './rng';
 import * as spots from './spots';
 
@@ -316,6 +324,8 @@ export interface FlopRead {
 	/** Share of your range and of theirs with at least 80% equity: the nut hands. */
 	nut_mine: number;
 	nut_theirs: number;
+	/** What your range does on this group when the flop is solved as a game; null where it is not solved. */
+	solved: GroupSolved | null;
 }
 
 /**
@@ -332,8 +342,10 @@ export function flopRead(
 	const group = flopGroup(board);
 	const stats = groupStats(key, group);
 	if (!stats) return null;
+	const solved = groupSolved(key, group, aggressor);
 	return aggressor
 		? {
+				solved,
 				group,
 				range_eq: stats.eq,
 				range_eq_min: stats.eq_min,
@@ -342,6 +354,7 @@ export function flopRead(
 				nut_theirs: stats.nut_caller
 			}
 		: {
+				solved,
 				group,
 				range_eq: 1 - stats.eq,
 				range_eq_min: 1 - stats.eq_max,
@@ -406,6 +419,17 @@ export const bluffShare = (size: number): number => size / (1 + 2 * size);
 /** Minimum defence frequency facing a bet: the share of the range that must continue. */
 export const defendFrequency = (pot: number, toCall: number): number => (pot - toCall) / pot;
 
+/**
+ * Share of the range that folds to a bet, from the solved numbers for a third and for two thirds of
+ * the pot: between the two sizes in proportion, the nearer one outside them. `pot` includes the bet.
+ */
+export function solvedFold(solved: GroupSolved, pot: number, toCall: number): number {
+	const before = pot - toCall;
+	const size = before > 0 ? toCall / before : BIG_BET;
+	const t = clamp((size - SMALL_BET) / (BIG_BET - SMALL_BET), 0, 1);
+	return solved.fold33 + t * (solved.fold66 - solved.fold33);
+}
+
 /** The strategy numbers for a spot, before any hand is looked at. */
 export interface Plan {
 	/** Bet size as a fraction of the pot, and the share of the range that bets. */
@@ -445,19 +469,33 @@ export function makePlan(prof: Profile, input: PlanInput): Plan {
 	};
 	const rangeEq = input.flop?.range_eq ?? prof.range_eq;
 	const nutEdge = input.flop ? input.flop.nut_mine - input.flop.nut_theirs : undefined;
-	const size = betSize(rangeEq, input.texture, nutEdge);
+	// Where the flop is solved for this matchup, the solved numbers replace the rules: how much of the
+	// range bets, the size it uses more, how many of the bets are for value, how much folds to a bet.
+	const solved = input.flop?.solved ?? null;
+	const size = solved
+		? solved.bet66 > solved.bet33
+			? BIG_BET
+			: SMALL_BET
+		: betSize(rangeEq, input.texture, nutEdge);
 	const frequency = clamp(
-		betFrequency(rangeEq, input.aggressor, input.texture, nutEdge) * (0.8 + 0.4 * aggro),
+		(solved
+			? solved.bet33 + solved.bet66
+			: betFrequency(rangeEq, input.aggressor, input.texture, nutEdge)) *
+			(0.8 + 0.4 * aggro),
 		0.05,
 		0.95
 	);
 	const bluffFactor = 1 + (bluff - 0.25) * 1.5;
-	const valueShare = 1 - bluffShare(size);
+	const valueShare = solved ? solved.value : 1 - bluffShare(size);
 	let defend = 0;
 	if (input.to_call > 0) {
 		const width = 1 + (0.5 - tight) * 0.6;
-		const realisation = input.facing_raise ? 0.75 : 0.92;
-		defend = clamp(defendFrequency(input.pot, input.to_call) * realisation * width, 0.08, 0.95);
+		if (solved && !input.facing_raise) {
+			defend = clamp((1 - solvedFold(solved, input.pot, input.to_call)) * width, 0.08, 0.95);
+		} else {
+			const realisation = input.facing_raise ? 0.75 : 0.92;
+			defend = clamp(defendFrequency(input.pot, input.to_call) * realisation * width, 0.08, 0.95);
+		}
 	}
 	return {
 		size,
@@ -640,6 +678,45 @@ export const JITTER = 0.03;
 export const below = (rank: number, limit: number): number =>
 	clamp((limit - rank + JITTER) / (2 * JITTER), 0, 1);
 
+/**
+ * How often a hand does each thing, as shares of [bet or raise for value, bluff, call]; the rest
+ * checks or folds. The same rules as `recommend`, with the thresholds blurred by the jitter the
+ * robots use, so a hand near a limit is split between the two actions instead of flipping.
+ */
+export function actionShares(prof: Profile, plan: Plan, toCall: number): [number, number, number] {
+	const rank = rankIn(prof);
+	if (toCall <= 0) {
+		const value = below(rank, plan.value_cut);
+		// A bluff is a hand with no made hand among the best outside the value region.
+		const bluffs = prof.nopair ? bluffsAhead(prof, plan.value_cut) : Infinity;
+		const bluff = (1 - value) * (prof.nopair ? below(bluffs, plan.bluff_quota) : 0);
+		return [value, bluff, 0];
+	}
+	const continues = below(rank, plan.defend);
+	const raise = continues * below(rank, 0.1);
+	return [raise, 0, continues - raise];
+}
+
+/** Average equity of your range against theirs on this board (sampled), or null if a range has no hand left. */
+export function rangeEquity(
+	board: readonly Card[],
+	mine: Weighted,
+	theirs: Weighted
+): number | null {
+	return rangeStats(board, mine, theirs)?.rangeEq ?? null;
+}
+
+/** Two cards from the range that avoid the board: the profile needs a hand even when none is given. */
+export function anyTwo(board: readonly Card[], mine: Weighted): [Card, Card] {
+	for (const name of Object.keys(mine).sort()) {
+		for (const combo of classCombos(name)) {
+			if (!board.includes(combo[0]) && !board.includes(combo[1])) return [combo[0], combo[1]];
+		}
+	}
+	const free = Array.from({ length: 52 }, (_, i) => i).filter((c) => !board.includes(c));
+	return [free[0], free[1]];
+}
+
 /** One hand class of a range on the equity chart. */
 export interface ClassPoint {
 	hand: string;
@@ -694,6 +771,79 @@ export function equityCurve(
 ): number[] | null {
 	const stats = rangeStats(board, mine, theirs);
 	return stats ? stats.refs.map(([e]) => e).sort((a, b) => a - b) : null;
+}
+
+/**
+ * How much a range narrows when `players` are in the pot instead of two: read off the opening charts,
+ * which narrow the same way as more players are still to beat. The share is the width of the range a
+ * player opens with players - 1 opponents behind, over the width with one opponent (3 players: 0.79,
+ * 4: 0.46, 5: 0.34, 6: 0.26 with the present charts).
+ */
+export function potTightness(players: number): number {
+	if (players <= 2) return 1;
+	const width = (opponents: number) => percent(seatRange(opponents + 1, 0).hands);
+	return width(Math.min(players - 1, 8)) / width(1);
+}
+
+/**
+ * The strongest `share` of a range, by combos: hands go in from the strongest (the preflop hand
+ * order), the hand on the edge keeps part of its weight.
+ */
+export function tighten(range: Weighted, share: number): Weighted {
+	if (share >= 1) return range;
+	const names = Object.keys(range)
+		.filter((h) => range[h] > 0)
+		.sort((a, b) => percentile(a) - percentile(b) || (a < b ? -1 : 1));
+	let left = share * names.reduce((s, h) => s + range[h] * classSize(h), 0);
+	const out: Weighted = {};
+	for (const h of names) {
+		if (left <= 1e-12) break;
+		const mass = range[h] * classSize(h);
+		out[h] = range[h] * Math.min(1, left / mass);
+		left -= mass;
+	}
+	return out;
+}
+
+/**
+ * A single-raised pot with three or more players, brought down to the two-player model by tightening:
+ * (your range, their range, you opened), or null where there is no range model.
+ * Every player starts from its chart range (the opener's opening range, a caller's calling range
+ * against that opener), "they" are the other players' ranges put together, and both sides keep only
+ * the strongest potTightness(players) of their range: the more players came in, the stronger the
+ * hands that are still worth playing, and the best of several opponents' hands is a strong one.
+ */
+export function multiwayRanges(
+	g: GameState,
+	seat: number,
+	order: number[]
+): [Weighted, Weighted, boolean] | null {
+	const contenders = g.players.filter((p) => p.in_hand && !p.folded).map((p) => p.seat);
+	if (contenders.length < 3 || !contenders.includes(seat) || g.raisers.length !== 1) return null;
+	const n = order.length;
+	const behind = (s: number) => n - 1 - order.indexOf(s);
+	const opener = g.raisers[0];
+	const openerClass = spots.positionClass(behind(opener), true);
+	const base = (s: number): Weighted | null => {
+		if (s === opener)
+			return Object.fromEntries([...seatRange(n, order.indexOf(opener)).hands].map((h) => [h, 1]));
+		const call = spots.vsOpen(spots.positionClass(behind(s)), openerClass)?.call;
+		return call && Object.keys(call).length ? call : null;
+	};
+	const mine = base(seat);
+	if (!mine) return null;
+	const theirs: Weighted = {};
+	let others = 0;
+	for (const s of contenders) {
+		if (s === seat) continue;
+		const range = base(s);
+		if (!range) return null;
+		others++;
+		for (const [h, w] of Object.entries(range)) theirs[h] = (theirs[h] ?? 0) + w;
+	}
+	for (const h of Object.keys(theirs)) theirs[h] /= others;
+	const share = potTightness(contenders.length);
+	return [tighten(mine, share), tighten(theirs, share), seat === opener];
 }
 
 /**

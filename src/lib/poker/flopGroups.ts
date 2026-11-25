@@ -10,12 +10,14 @@
 // group with more than 1.5 points of spread on average). Both were measured on every flop for every
 // matchup of the charts by nvcc/flopstats.cu.
 //
+// Solved flops (nvcc/flopsolve.cu) per matchup and group: data/flop-solved.json, for the matchups computed so far.
 // Tables: data/flop-groups.json (tools/make-flop-groups.ts, from nvcc/data/flops-1755.csv) and
 // data/flop-group-stats.json (`flopstats groups`).
 
 import type { Card } from './cards';
 import table from './data/flop-groups.json';
 import stats from './data/flop-group-stats.json';
+import solved from './data/flop-solved.json';
 
 export interface FlopGroup {
 	/** 1..383, in the order of the characteristics. */
@@ -113,3 +115,39 @@ export function groupStats(key: string, group: FlopGroup): GroupStats | null {
 }
 
 export const MATCHUP_KEYS: readonly string[] = Object.keys(stats.matchups);
+
+/**
+ * What one player does on the flops of a group when the flop is solved as a game (nvcc/flopsolve.cu:
+ * the equilibrium of a small betting tree on the exact hand-against-hand equities, with a real turn
+ * card and one round of betting on it). Shares of that player's range.
+ */
+export interface GroupSolved {
+	/** At its first decision (first to act, or after a check): bets a third of the pot, two thirds. */
+	bet33: number;
+	bet66: number;
+	/** Share of those bets made with at least 50% equity: value; the rest are bluffs. */
+	value: number;
+	/** Facing a bet of a third of the pot, of two thirds: folds, raises (the rest calls). */
+	fold33: number;
+	raise33: number;
+	fold66: number;
+	raise66: number;
+}
+
+const SOLVED_VALUES = 7; // per player; the aggressor's seven, then the caller's
+
+/** The solved row of a matchup on a flop group for one of its two players, or null if it is not solved. */
+export function groupSolved(key: string, group: FlopGroup, aggressor: boolean): GroupSolved | null {
+	const packed = (solved.matchups as Record<string, string>)[key];
+	if (!packed) return null;
+	const at = ((group.id - 1) * 2 + (aggressor ? 0 : 1)) * SOLVED_VALUES * 2;
+	const [bet33, bet66, value, fold33, raise33, fold66, raise66] = Array.from(
+		{ length: SOLVED_VALUES },
+		(_, i) => parseInt(packed.slice(at + i * 2, at + i * 2 + 2), 32) / 1023
+	);
+	return { bet33, bet66, value, fold33, raise33, fold66, raise66 };
+}
+
+/** The matchups that have a solved table, and the model it was solved with. */
+export const SOLVED_KEYS: readonly string[] = Object.keys(solved.matchups);
+export const SOLVED_MODEL: string = solved.model;

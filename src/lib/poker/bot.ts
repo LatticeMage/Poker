@@ -268,17 +268,22 @@ function facingRaise(
 		// Approximations on top of the charts: style, open size (minimum defence frequency), callers
 		// already in, and a shallower stack.
 		const raises = mixed.sum(spot.value3, spot.bluff3);
+		const callers = g.players.filter(
+			(o) => o.seat !== me && o.seat !== opener && o.in_hand && !o.folded && o.bet >= g.current_bet
+		).length;
+		// With callers already in, the calling range is the chart's tightened for that many players
+		// (postflop.potTightness: the opening charts narrow the same way).
 		let callShare =
 			mixed.scaledCalls(
 				spot,
 				spot.call,
 				raises,
-				width * spots.sizeFactor(openerClass, sizeBb) * (stackBb < 40 ? 0.75 : 1)
+				width *
+					spots.sizeFactor(openerClass, sizeBb) *
+					(stackBb < 40 ? 0.75 : 1) *
+					postflop.potTightness(2 + callers)
 			)[name] ?? 0;
 		bluff *= 0.5 + persona.aggro;
-		const callers = g.players.filter(
-			(o) => o.seat !== me && o.seat !== opener && o.in_hand && !o.folded && o.bet >= g.current_bet
-		).length;
 		if (callers) bluff *= 0.25;
 		if (stackBb < 25) bluff = 0;
 		bluff = Math.min(bluff, 1 - value);
@@ -409,7 +414,7 @@ function facingHeuristic(
 	return rank <= callRange ? call() : passive(legal);
 }
 
-/** A heads-up flop, turn or river from the range model (postflop.ts); null where it has none. */
+/** A flop, turn or river from the range model (postflop.ts); null where it has none. */
 function streetPlan(
 	g: Game,
 	legal: Legal,
@@ -418,9 +423,13 @@ function streetPlan(
 	hole: readonly Card[]
 ): Action | null {
 	if (g.street === 'preflop') return null;
-	const plan = postflop.headsUpRanges(g, legal.seat, preflopOrder(g));
-	if (!plan) return null;
-	const [mine, theirs, aggressor, key] = plan;
+	// Two players: the range model with its flop tables. More: the same model on tightened ranges.
+	const order = preflopOrder(g);
+	const two = postflop.headsUpRanges(g, legal.seat, order);
+	const many = two ? null : postflop.multiwayRanges(g, legal.seat, order);
+	if (!two && !many) return null;
+	const [mine, theirs, aggressor] = two ?? many!;
+	const key = two ? two[3] : null;
 	const prof = postflop.profile(g.board, hole, mine, theirs);
 	if (!prof) return null;
 	const me = g.players[legal.seat];

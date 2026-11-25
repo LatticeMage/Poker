@@ -160,6 +160,20 @@ export interface BoardEquity {
 			range_eq_max: number;
 			nut_mine: number;
 			nut_theirs: number;
+			/**
+			 * Your range's play on this group when the flop is solved as a game (shares of the range:
+			 * bets by size, value share of the bets, folds and raises facing each size); null where the
+			 * matchup is not solved, and the plan then comes from the rules.
+			 */
+			solved: {
+				bet33: number;
+				bet66: number;
+				value: number;
+				fold33: number;
+				raise33: number;
+				fold66: number;
+				raise66: number;
+			} | null;
 		} | null;
 	};
 	unknown: UnknownHands;

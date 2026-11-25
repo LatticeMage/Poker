@@ -4,6 +4,7 @@
 // play, the query): see the getters at the bottom and BoardEquity.svelte.
 
 import { browser } from '$app/environment';
+import type { LineAction } from '$lib/poker/line';
 import type { BoardQuery } from '$lib/types/ranges';
 import { type Card, isCard, makeCard } from '$lib/utils/cards';
 
@@ -54,6 +55,21 @@ function cleanSlots(size: number) {
 
 const cleanText = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
 
+/** The saved actions of the hand line: anything that is not an action is dropped. */
+function cleanLine(value: unknown): LineAction[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const out: LineAction[] = [];
+	for (const item of value as Record<string, unknown>[]) {
+		if (!item || (item.by !== 'opener' && item.by !== 'other')) continue;
+		if (item.kind === 'check' || item.kind === 'call' || item.kind === 'fold') {
+			out.push({ kind: item.kind, by: item.by });
+		} else if ((item.kind === 'bet' || item.kind === 'raise') && typeof item.to === 'number') {
+			out.push({ kind: item.kind, by: item.by, to: item.to });
+		}
+	}
+	return out;
+}
+
 class BoardEquityInputs {
 	// Each input is a signal with its own saved copy. The setter writes the signal and its key in the
 	// same step, so nothing has to watch the state to save it.
@@ -68,6 +84,14 @@ class BoardEquityInputs {
 	);
 	#board = $state<(Card | null)[]>(read('board', cleanSlots(BOARD_SLOTS), DEFAULT_BOARD));
 	#hand = $state<(Card | null)[]>(read('hand', cleanSlots(HAND_SLOTS), [null, null]));
+	#line = $state<LineAction[]>(read('line', cleanLine, []));
+	#players = $state(
+		read(
+			'players',
+			(v) => (typeof v === 'number' && Number.isInteger(v) && v >= 2 && v <= 9 ? v : undefined),
+			2
+		)
+	);
 
 	/** Single-raised, 3-bet or 4-bet pot. */
 	get pot() {
@@ -124,6 +148,23 @@ class BoardEquityInputs {
 	set hand(value: (Card | null)[]) {
 		this.#hand = value;
 		write('hand', value);
+	}
+
+	/** Players who came into the pot (the line follows two of them; more tightens the ranges). */
+	get players() {
+		return this.#players;
+	}
+	set players(value: number) {
+		this.#players = value;
+		write('players', value);
+	}
+	/** What the two players did after the flop, in order (the cards come from the board). */
+	get line() {
+		return this.#line;
+	}
+	set line(value: LineAction[]) {
+		this.#line = value;
+		write('line', value);
 	}
 
 	// -- computed from the inputs: the only place where they are put together --------------------
@@ -184,6 +225,20 @@ class BoardEquityInputs {
 
 	clearHand() {
 		this.hand = [null, null];
+	}
+
+	/** Add an action to the end of the hand line; `keep` drops the actions after that many first. */
+	act(action: LineAction, keep = this.line.length) {
+		this.line = [...this.line.slice(0, keep), action];
+	}
+
+	/** Take back the last action of the hand line. */
+	undo() {
+		this.line = this.line.slice(0, -1);
+	}
+
+	clearLine() {
+		this.line = [];
 	}
 }
 

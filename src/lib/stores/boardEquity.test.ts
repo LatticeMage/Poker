@@ -74,4 +74,24 @@ describe('board-equity inputs', () => {
 		expect(inputs.hasHand).toBe(false);
 		expect([...inputs.board]).toEqual([As, Kh, Qd, null, TwoC]);
 	});
+
+	it('the hand line is its own input: actions are added, taken back and cleared without touching the rest', () => {
+		inputs.clearLine();
+		inputs.act({ kind: 'check', by: 'other' });
+		inputs.act({ kind: 'bet', by: 'opener', to: 1.5 });
+		inputs.act({ kind: 'call', by: 'other' });
+		expect(inputs.line).toHaveLength(3);
+		inputs.undo();
+		expect(inputs.line.map((a) => a.kind)).toEqual(['check', 'bet']);
+		// adding after the first action replaces what came after it
+		inputs.act({ kind: 'bet', by: 'opener', to: 3 }, 1);
+		expect(inputs.line).toEqual([
+			{ kind: 'check', by: 'other' },
+			{ kind: 'bet', by: 'opener', to: 3 }
+		]);
+		expect([...inputs.board]).toEqual([As, Kh, Qd, Jc, null]);
+		expect([...inputs.hand]).toEqual([Ts, NineH]);
+		inputs.clearLine();
+		expect(inputs.line).toEqual([]);
+	});
 });

@@ -15,6 +15,7 @@ import type {
 } from '$lib/types/ranges';
 import { cardCode } from '$lib/utils/cards';
 import * as charts from './charts';
+import { type HandLine, type LineState, replay } from './line';
 
 export const HEADS_UP_STACKS = charts.HEADS_UP_STACKS;
 
@@ -73,3 +74,8 @@ export function attempt<T>(fn: () => T): Attempt<T> {
 		return { error: cause instanceof Error ? cause.message : 'Could not load the chart' };
 	}
 }
+
+/** A hand replayed step by step (line.ts); one answer per hand, like every other lookup. */
+export const handLine = cached((line: HandLine) => JSON.stringify(line), replay) as (
+	line: HandLine
+) => LineState[];

@@ -13,6 +13,7 @@
 	import HandLine from '$lib/components/HandLine.svelte';
 	import { type LineState, type PotKind, type Side, lineSteps } from '$lib/poker/line';
 	import { attempt, handLine, spotList as getSpotList } from '$lib/poker/lookup';
+	import { byClass } from '$lib/poker/range';
 	import { boardInputs as inputs } from '$lib/stores/boardEquity.svelte';
 	import { holeToHand } from '$lib/utils/hands';
 	import { describeStep } from '$lib/utils/lines';
@@ -65,8 +66,9 @@
 
 	/** The share of every hand class still in a player's range, as the grid wants it. */
 	function rangeMix(state: LineState, s: number): Record<string, [number, number, number]> {
+		const share = byClass(state.board, (i) => state.ranges[s][i]);
 		return Object.fromEntries(
-			Object.entries(state.ranges[s])
+			Object.entries(share)
 				.filter(([, w]) => w > 0)
 				.map(([hand, w]) => [hand, [Math.min(1, w), 0, 0]])
 		);
@@ -80,13 +82,22 @@
 		return null;
 	}
 
-	/** Per hand: [bet or raise, -, call]; the rest checks or folds. */
+	/** Per hand: [bet or raise, -, call]; the rest checks or folds. Combos count by their weight. */
 	function actionMix(state: LineState): Record<string, [number, number, number]> {
 		const st = state.strategy!;
+		const range = state.ranges[st.by === 'opener' ? 0 : 1];
+		const share = (option: number) =>
+			byClass(
+				state.board,
+				(i) => st.combos[i]![option],
+				(i) => (st.combos[i] ? range[i] : 0)
+			);
+		const raise = share(st.options.length === 2 ? 1 : 2);
+		const call = st.options.length === 2 ? {} : share(1);
 		return Object.fromEntries(
-			Object.entries(st.classes).map(([hand, x]) => [
+			Object.keys(raise).map((hand) => [
 				hand,
-				st.options.length === 2 ? [x[1], 0, 0] : [x[2], 0, x[1]]
+				[raise[hand], 0, (call as Record<string, number>)[hand] ?? 0]
 			])
 		);
 	}

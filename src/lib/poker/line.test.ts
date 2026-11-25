@@ -1,7 +1,10 @@
 // The decision chain: a hand replayed step by step, ranges narrowed by what each player did.
 import { describe, expect, it } from 'vitest';
 import { parseCompact } from './cards';
+import { genRange } from './genRange';
+import { genStrategy } from './genStrategy';
 import {
+	genGame,
 	type HandLine,
 	LINE_FLOOR,
 	type LineAction,
@@ -207,5 +210,40 @@ describe('replaying a hand', () => {
 		expect(bad([{ kind: 'deal', cards: parseCompact('As') }], 4)).toThrow(LineError); // card already out
 		expect(bad([{ kind: 'check', by: 'other' }], 10)).toThrow(LineError); // the hand is over
 		expect(() => replay({ pot: 'srp', opener: 'BB', other: 'BTN', steps: [] })).toThrow(LineError);
+	});
+});
+
+describe('a game as table statuses, and the two pure functions', () => {
+	const line = hand(6, { hole: { opener: parseCompact('AhKd') } });
+	const game = genGame(line);
+	const states = replay(line);
+	const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+	it('is one status before any step and one after each, and survives JSON', () => {
+		expect(game).toHaveLength(7);
+		expect(copy(game)).toStrictEqual(game);
+		expect(game[3]).toMatchObject({ pot: 6, to_act: 'other', history: line.steps.slice(0, 3) });
+		expect(game[3]).not.toHaveProperty('ranges');
+	});
+
+	it('any status on its own gives its ranges, and with them its strategy', () => {
+		const saved = copy(game);
+		for (const k of [5, 0, 3, 6, 1, 4, 2]) {
+			const ranges = genRange(saved[k]);
+			expect(ranges).toStrictEqual(states[k].ranges);
+			const hole = saved[k].to_act === 'opener' ? parseCompact('AhKd') : null;
+			expect(genStrategy(saved[k], ranges, hole)).toStrictEqual(states[k].strategy);
+		}
+	});
+
+	it("does not change what it is given, and what it returns is the caller's own", () => {
+		const status = copy(game[3]);
+		const ranges = genRange(status);
+		const kept = copy(ranges);
+		genStrategy(status, ranges);
+		expect(status).toStrictEqual(game[3]);
+		expect(ranges).toStrictEqual(kept);
+		ranges[0].fill(0);
+		expect(genRange(status)).toStrictEqual(kept);
 	});
 });

@@ -36,6 +36,7 @@ import {
 	groupStats,
 	matchupKey
 } from './flopGroups';
+import { COMBOS, type Range } from './range';
 import { classCombos, combos as classSize, percent, percentile, seatRange } from './ranges';
 import { type Rng, crc32, mulberry32, sample } from './rng';
 import * as spots from './spots';
@@ -241,19 +242,18 @@ const statsCache = new Lru<RangeStats | null>(4096);
 
 /**
  * Sampled hands of your range with their equity against the opponent's range, the average, and the
- * scenarios they were scored on. Depends only on the board and the two ranges, so it is cached; the
- * sample is seeded from them, which also makes it reproducible.
+ * scenarios they were scored on. Depends only on the board and the two ranges, so it is cached under
+ * `key`, which names them; the sample is seeded from it, which also makes it reproducible.
  */
-function rangeStats(board: readonly Card[], mine: Weighted, theirs: Weighted): RangeStats | null {
-	const mineItems = itemsOf(mine);
-	const theirItems = itemsOf(theirs);
-	const key = keyOf(board, mineItems, theirItems);
+function statsFor(
+	key: string,
+	board: readonly Card[],
+	pools: (blocked: ReadonlySet<Card>) => [mine: Pool, theirs: Pool]
+): RangeStats | null {
 	const hit = statsCache.get(key);
 	if (hit !== undefined) return hit;
 
-	const blocked = new Set(board);
-	const references = poolOf(mine, blocked);
-	const opponents = poolOf(theirs, blocked);
+	const [references, opponents] = pools(new Set(board));
 	let result: RangeStats | null = null;
 	if (references.combos.length && opponents.combos.length) {
 		const rng = mulberry32(crc32(key));
@@ -277,6 +277,59 @@ function rangeStats(board: readonly Card[], mine: Weighted, theirs: Weighted): R
 	return result;
 }
 
+/** The statistics of two ranges given per hand class. */
+function rangeStats(board: readonly Card[], mine: Weighted, theirs: Weighted): RangeStats | null {
+	const key = keyOf(board, itemsOf(mine), itemsOf(theirs));
+	return statsFor(key, board, (blocked) => [poolOf(mine, blocked), poolOf(theirs, blocked)]);
+}
+
+/** A per-combo range's live combos with running weights, in the fixed combo order. */
+function comboPool(range: Range, blocked: ReadonlySet<Card>): Pool {
+	const combos: [Card, Card][] = [];
+	const cumulative: number[] = [];
+	let total = 0;
+	for (let i = 0; i < range.length; i++) {
+		const [a, b] = COMBOS[i];
+		if (range[i] <= 0 || blocked.has(a) || blocked.has(b)) continue;
+		total += range[i];
+		combos.push([a, b]);
+		cumulative.push(total);
+	}
+	return { combos, cumulative };
+}
+
+const comboKey = (range: Range): string => {
+	let out = '';
+	for (let i = 0; i < range.length; i++) if (range[i] > 0) out += `${i}:${range[i]},`;
+	return out;
+};
+
+/** Two per-combo ranges on a board: the range equity, and the profile of any hand of yours. */
+export interface Matchup {
+	range_eq: number;
+	profile: (hole: readonly Card[]) => Profile | null;
+}
+
+export function matchupOf(board: readonly Card[], mine: Range, theirs: Range): Matchup | null {
+	const key = `${board.join(',')}|${comboKey(mine)}|${comboKey(theirs)}`;
+	const stats = statsFor(key, board, (blocked) => [
+		comboPool(mine, blocked),
+		comboPool(theirs, blocked)
+	]);
+	if (!stats) return null;
+	return { range_eq: stats.rangeEq, profile: (hole) => profileOn(stats, board, hole) };
+}
+
+function profileOn(
+	stats: RangeStats,
+	board: readonly Card[],
+	hole: readonly Card[]
+): Profile | null {
+	const eq = equityOn(hole, stats.scenarios, board);
+	if (eq === null) return null;
+	return { eq, refs: stats.refs, range_eq: stats.rangeEq, nopair: !hasMadeHand(hole, board) };
+}
+
 /** Equity of your hand, and of hands sampled from your range, against the opponent's range. */
 export function profile(
 	board: readonly Card[],
@@ -285,10 +338,7 @@ export function profile(
 	theirs: Weighted
 ): Profile | null {
 	const stats = rangeStats(board, mine, theirs);
-	if (!stats) return null;
-	const eq = equityOn(hole, stats.scenarios, board);
-	if (eq === null) return null;
-	return { eq, refs: stats.refs, range_eq: stats.rangeEq, nopair: !hasMadeHand(hole, board) };
+	return stats ? profileOn(stats, board, hole) : null;
 }
 
 const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));

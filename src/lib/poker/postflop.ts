@@ -8,9 +8,12 @@
 //    cards are drawn at random; on the river there is nothing left to draw).
 //    That yields your hand's rank inside your range and the range advantage (average equity above
 //    or below 50%).
-// 3. Betting: the more range advantage, the more you bet. Flops are sorted into a few textures (dry,
-//    paired, wet, monotone); static boards and clear advantages get the small bet, wet boards the
-//    bigger one. The strongest hands bet for value; bluffs are drawn from the no-pair hands with the
+// 3. Betting: the more range advantage, the more you bet. The flop's group (flopGroups.ts: 383 groups by
+//    suits, high cards, connectedness, which high cards, low cards middle or small) is the base of the
+//    tree: it gives the texture (dry, paired, wet, monotone, from the counted wetness) and, on the flop
+//    of a 6-max pot, the range advantage and the nut advantage of the matchup, computed exactly offline
+//    (nvcc/flopstats.cu) instead of sampled. Static boards and clear advantages get the small bet; the
+//    big bet needs a wet board and no fewer nut hands than the opponent. The strongest hands bet for value; bluffs are drawn from the no-pair hands with the
 //    most equity, in the ratio that makes a caller indifferent: bluffs / bets = s / (1 + 2s) for a
 //    bet of s times the pot.
 // 4. Facing a bet: defend the minimum defence frequency, pot / (pot + bet), taking the strongest
@@ -24,6 +27,7 @@
 import type { GameState } from '$lib/types/game';
 import type { Card } from './cards';
 import { CATEGORY_UNIT, handScore } from './evaluate';
+import { type FlopGroup, flopGroup, groupLevels, groupStats, matchupKey } from './flopGroups';
 import { classCombos, seatRange } from './ranges';
 import { type Rng, crc32, mulberry32, sample } from './rng';
 import * as spots from './spots';
@@ -283,19 +287,68 @@ const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x
 
 export type Texture = 'monotone' | 'paired' | 'wet' | 'dry';
 
+/** A flop group is wet from here: the counted share of hands that make or draw a flush or straight. */
+export const WET_FROM = 0.25;
+
 /**
- * Flop category: monotone, paired, wet (connected or drawing) or dry. Read from the first three
- * cards, so the turn and river keep the texture the flop had.
+ * Flop category, read from the flop's group (flopGroups.ts), so the turn and river keep the texture
+ * the flop had. Monotone and paired are what the group name says; wet is counted, not guessed from the
+ * gaps: the groups fall into two clusters (at most 0.162 and at least 0.30), so the cut is clean.
  */
 export function boardTexture(board: readonly Card[]): Texture {
-	const flop = board.slice(0, 3);
-	const ranks = flop.map((c) => (c >> 2) + 2).sort((a, b) => b - a);
-	const suits = new Set(flop.map((c) => c & 3));
-	if (suits.size === 1) return 'monotone';
-	if (new Set(ranks).size < ranks.length) return 'paired';
-	const span = ranks[0] - ranks[ranks.length - 1];
-	if (span <= 4 || (suits.size === 2 && span <= 7)) return 'wet';
-	return 'dry';
+	const group = flopGroup(board);
+	const [suits] = groupLevels(group);
+	if (suits === '單色') return 'monotone';
+	if (/對|三條/.test(group.name)) return 'paired';
+	return group.wetness >= WET_FROM ? 'wet' : 'dry';
+}
+
+/**
+ * What the flop's group says about a matchup, from the side of the player to act: the leaf of the tree.
+ * Exact offline numbers (every flop of the group, every turn and river), so nothing here is sampled.
+ */
+export interface FlopRead {
+	group: FlopGroup;
+	/** Your range's equity on flops of this group, and the lowest and highest among its flops. */
+	range_eq: number;
+	range_eq_min: number;
+	range_eq_max: number;
+	/** Share of your range and of theirs with at least 80% equity: the nut hands. */
+	nut_mine: number;
+	nut_theirs: number;
+}
+
+/**
+ * The read of a flop for a matchup (see matchupKey), or null when there is none: off the flop (the
+ * turn and river change the ranges' standing, the flop's group no longer describes it) or for a
+ * matchup the table does not have.
+ */
+export function flopRead(
+	key: string | null,
+	board: readonly Card[],
+	aggressor: boolean
+): FlopRead | null {
+	if (!key || board.length !== 3) return null;
+	const group = flopGroup(board);
+	const stats = groupStats(key, group);
+	if (!stats) return null;
+	return aggressor
+		? {
+				group,
+				range_eq: stats.eq,
+				range_eq_min: stats.eq_min,
+				range_eq_max: stats.eq_max,
+				nut_mine: stats.nut_aggressor,
+				nut_theirs: stats.nut_caller
+			}
+		: {
+				group,
+				range_eq: 1 - stats.eq,
+				range_eq_min: 1 - stats.eq_max,
+				range_eq_max: 1 - stats.eq_min,
+				nut_mine: stats.nut_caller,
+				nut_theirs: stats.nut_aggressor
+			};
 }
 
 /** How much of the range bets on each kind of flop, relative to a dry one. */
@@ -306,22 +359,44 @@ const TEXTURE_FREQUENCY: Record<Texture, number> = {
 	monotone: 0.7
 };
 
-/** Small bets on static boards or with a clear range advantage, bigger ones on wet boards. */
-export function betSize(rangeEq: number, texture: Texture = 'dry'): number {
+/** A nut edge (your nut share minus theirs) from here on counts as holding more of the nuts. */
+export const NUT_EDGE = 0.03;
+/** How much one point of nut edge moves the betting frequency (a point of range equity moves it 4.5). */
+const NUT_WEIGHT = 1;
+
+/**
+ * Small bets on static boards or with a clear range advantage, bigger ones on wet boards. With the
+ * nut edge known (the flop read), a big bet also needs the nuts on your side: without at least as many
+ * nut hands as the opponent the bet stays small, and on a static board where your range is behind, a
+ * big bet is only for a real nut edge.
+ *
+ * A monotone board always takes the small bet. Measured over the 15 single-raised matchups, the two
+ * ranges hold the same share of nut hands there (10.8% against 10.9%), so nobody has the nut edge a big
+ * bet stands on, and "at least as many nut hands" was a coin flip that sent half of the monotone flops
+ * to the big bet.
+ */
+export function betSize(rangeEq: number, texture: Texture = 'dry', nutEdge?: number): number {
+	if (texture === 'monotone') return SMALL_BET;
 	const advantage = rangeEq - 0.5;
-	if (advantage >= 0.06 || ((texture === 'dry' || texture === 'paired') && advantage >= 0)) {
-		return SMALL_BET;
-	}
-	return BIG_BET;
+	const wet = texture === 'wet';
+	if (advantage >= 0.06 || (!wet && advantage >= 0)) return SMALL_BET;
+	if (nutEdge === undefined) return BIG_BET;
+	return nutEdge >= (wet ? 0 : NUT_EDGE) ? BIG_BET : SMALL_BET;
 }
 
-/** How much of the range bets: more with a range advantage, less for the player who checked to. */
+/**
+ * How much of the range bets: more with a range advantage and with a nut edge, less for the player
+ * who checked to.
+ */
 export function betFrequency(
 	rangeEq: number,
 	aggressor: boolean,
-	texture: Texture = 'dry'
+	texture: Texture = 'dry',
+	nutEdge = 0
 ): number {
-	const freq = clamp(0.45 + 4.5 * (rangeEq - 0.5), 0.2, 0.9) * TEXTURE_FREQUENCY[texture];
+	const freq =
+		clamp(0.45 + 4.5 * (rangeEq - 0.5) + NUT_WEIGHT * nutEdge, 0.2, 0.9) *
+		TEXTURE_FREQUENCY[texture];
 	return aggressor ? freq : freq * 0.75;
 }
 
@@ -346,6 +421,8 @@ export interface Plan {
 
 export interface PlanInput {
 	texture: Texture;
+	/** The flop's group read for this matchup; without it the sampled range equity is used. */
+	flop?: FlopRead | null;
 	pot: number;
 	to_call: number;
 	aggressor: boolean;
@@ -366,9 +443,11 @@ export function makePlan(prof: Profile, input: PlanInput): Plan {
 		bluff: input.persona_bluff,
 		tight: input.persona_tight
 	};
-	const size = betSize(prof.range_eq, input.texture);
+	const rangeEq = input.flop?.range_eq ?? prof.range_eq;
+	const nutEdge = input.flop ? input.flop.nut_mine - input.flop.nut_theirs : undefined;
+	const size = betSize(rangeEq, input.texture, nutEdge);
 	const frequency = clamp(
-		betFrequency(prof.range_eq, input.aggressor, input.texture) * (0.8 + 0.4 * aggro),
+		betFrequency(rangeEq, input.aggressor, input.texture, nutEdge) * (0.8 + 0.4 * aggro),
 		0.05,
 		0.95
 	);
@@ -618,7 +697,9 @@ export function equityCurve(
 }
 
 /**
- * (your range, their range, you were the preflop aggressor) for a heads-up postflop spot, or null.
+ * (your range, their range, you were the preflop aggressor, the matchup key of the flop table) for a
+ * heads-up postflop spot, or null. The key is null away from a 6-player table: the table was computed
+ * for the 6-max charts, and other table sizes open other ranges.
  * Covers single-raised pots (the opener vs the caller), 3-bet pots (the 3-bettor vs the opener who
  * called) and 4-bet pots (the opener vs the 3-bettor who continued). Anything else - limped pots, a
  * cold caller, 5-bet pots - has no range model here.
@@ -627,7 +708,7 @@ export function headsUpRanges(
 	g: GameState,
 	seat: number,
 	order: number[]
-): [Weighted, Weighted, boolean] | null {
+): [Weighted, Weighted, boolean, string | null] | null {
 	const contenders = g.players.filter((p) => p.in_hand && !p.folded).map((p) => p.seat);
 	if (contenders.length !== 2 || !contenders.includes(seat)) return null;
 	const n = order.length;
@@ -635,6 +716,8 @@ export function headsUpRanges(
 	const raisers = g.raisers;
 	let built: [Weighted, Weighted] | null;
 	let aggressor: number;
+	let kind: 'srp' | '3bet' | '4bet';
+	let seats: [opener: number, other: number];
 	if (raisers.length === 1) {
 		const opener = raisers[0];
 		const callers = contenders.filter((c) => c !== opener);
@@ -646,6 +729,8 @@ export function headsUpRanges(
 			seatRange(n, order.indexOf(opener)).hands
 		);
 		aggressor = opener;
+		kind = 'srp';
+		seats = [opener, callers[0]];
 	} else if (raisers.length === 2) {
 		const [opener, bettor] = raisers;
 		if (contenders.length !== 2 || !contenders.includes(opener) || !contenders.includes(bettor))
@@ -657,6 +742,8 @@ export function headsUpRanges(
 			[]
 		);
 		aggressor = bettor;
+		kind = '3bet';
+		seats = [opener, bettor];
 	} else if (raisers.length === 3 && raisers[0] === raisers[2]) {
 		const [opener, bettor] = raisers;
 		if (!contenders.includes(opener) || !contenders.includes(bettor)) return null;
@@ -667,12 +754,22 @@ export function headsUpRanges(
 			[]
 		);
 		aggressor = opener;
+		kind = '4bet';
+		seats = [opener, bettor];
 	} else {
 		return null;
 	}
 	if (!built) return null;
 	const [aggressorRange, callerRange] = built;
+	const key =
+		n === 6
+			? matchupKey(
+					kind,
+					spots.positionClass(behind(seats[0]), true),
+					spots.positionClass(behind(seats[1]))
+				)
+			: null;
 	return seat === aggressor
-		? [aggressorRange, callerRange, true]
-		: [callerRange, aggressorRange, false];
+		? [aggressorRange, callerRange, true, key]
+		: [callerRange, aggressorRange, false, key];
 }

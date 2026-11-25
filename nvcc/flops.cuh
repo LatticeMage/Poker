@@ -204,9 +204,16 @@ static inline const char* flop_wetness_name(int w) {
 //   5. 三張同順: can all three cards sit in one straight (three different ranks within five, the ace also low)? Then two
 //      hole cards make a straight at once. Chosen by measurement: with the four levels above it explains 94.6% of the
 //      variance of the wetness (73 groups); 高低連度 in its place explained 77% (93 groups).
-//   6. 高低連度: how close the lowest high card is to the highest low card
-//   7. 同花的兩張 (two-tone only): both high / one high one low / both low
-// No level looks at WHICH card is the highest: a high card is any of T..A, nothing finer.
+//   6. 哪幾張高牌: which high cards they are (A, K, Q, J, T each on its own), e.g. AK, QQ, T
+//   7. 低牌中小: each low card is 中 (9..6) or 小 (5..2)
+//   8. 高低連度: how close the lowest high card is to the highest low card
+//   9. 同花的兩張 (two-tone only): both high / one high one low / both low
+// Levels 1 to 5 (73 groups) describe the STRUCTURE of the flop and explain its wetness. They do not say whose range
+// the flop is good for: measured on all 45 heads-up matchups of the charts (flopstats.cu), the 73 groups explain only
+// 24% of the flop-to-flop variance of the range equity in single-raised pots, because that depends on WHICH ranks are
+// out, not on their structure. Levels 6 and 7 add exactly that: 237 groups explain 78%, 383 groups 91% (3-bet pots
+// 94%, 4-bet pots 98%), and the wetness explained goes up to 97.6%. The 383 groups of level 7 are the base of the
+// postflop decision tree. Merging high ranks (J with T, or Q J T) loses most of it, so they stay separate.
 // Connectedness of two cards: 對 same rank / 連 adjacent / 跳 two to four apart (one straight still holds both) /
 // 斷 five or more apart (no straight holds both). Of three cards: 三條, 對＋連, 對＋跳, 對＋斷, 三連, 一連一跳, 兩跳,
 // 一連一斷, 一跳一斷, 全斷. Wet and dry are NOT a level: they are a result (flop_wetness_detail), listed beside each flop.
@@ -216,6 +223,8 @@ struct FlopShape {
 	int high_conn, high_fine;  // connectedness code of the high cards (0: fewer than two of them), exact gaps for the order inside it
 	int low_conn, low_fine;    // the same for the low cards
 	int same_straight;         // 0 not three different ranks, 1 同順 (all three in one straight), 2 不同順
+	int high_set;              // which high cards: digits (12 - rank) + 1 in base 6, high to low; smaller = higher cards
+	int low_band;              // the low cards high to low, 1 中 (9..6) or 2 小 (5..2) each, in base 3
 	int hl_conn, hl_dist;      // 0 none (all high or all low), 1 連, 2 跳, 3 斷; and the distance itself
 	int suited, suited_fine;   // two-tone: 1 雙高, 2 一高一低, 3 雙低 (else 0); the suited ranks for the order inside it
 	int gap_top, gap_low;      // rank differences: highest - middle, middle - lowest
@@ -262,6 +271,9 @@ static inline FlopShape flop_shape(const Flop& f) {
 	s.n_high = nh;
 	flop_group_conn(hi, nh, s.high_conn, s.high_fine);
 	flop_group_conn(lo, nl, s.low_conn, s.low_fine);
+	s.high_set = 0; s.low_band = 0;
+	for (int i = 0; i < nh; i++) s.high_set = s.high_set * 6 + (12 - hi[i]) + 1;
+	for (int i = 0; i < nl; i++) s.low_band = s.low_band * 3 + (lo[i] >= 4 ? 1 : 2);
 	s.hl_conn = 0; s.hl_dist = 0;
 	if (nh && nl) {
 		const int d = hi[nh - 1] - lo[0];   // the lowest high card to the highest low card
@@ -290,7 +302,7 @@ static inline FlopShape flop_shape(const Flop& f) {
 	return s;
 }
 
-// The name of a flop's group down to a level (1..7), e.g. "單色｜2高｜高跳｜不同順", "雙花｜3高｜高對＋跳｜同花雙高".
+// The name of a flop's group down to a level (1..9), e.g. "單色｜2高｜高跳｜不同順" (5), "三花｜1高｜低斷｜不同順｜K｜中小" (7).
 static inline std::string flop_shape_name(const Flop& f, int depth = 5) {
 	const FlopShape s = flop_shape(f);
 	std::string n = s.suits == 1 ? "單色" : (s.suits == 2 ? "雙花" : "三花");
@@ -298,12 +310,24 @@ static inline std::string flop_shape_name(const Flop& f, int depth = 5) {
 	if (depth >= 3 && s.high_conn) n += std::string("｜高") + flop_conn_name(s.high_conn);
 	if (depth >= 4 && s.low_conn) n += std::string("｜低") + flop_conn_name(s.low_conn);
 	if (depth >= 5 && s.same_straight) n += s.same_straight == 1 ? "｜同順" : "｜不同順";
-	if (depth >= 6 && s.hl_conn) n += std::string("｜高低") + (s.hl_conn == 1 ? "連" : (s.hl_conn == 2 ? "跳" : "斷"));
-	if (depth >= 7 && s.suited) n += std::string("｜同花") + (s.suited == 1 ? "雙高" : (s.suited == 2 ? "高低" : "雙低"));
+	if (depth >= 6 && s.high_set) {
+		n += "｜";
+		std::string cards;
+		for (int v = s.high_set; v; v /= 6) cards.insert(cards.begin(), "AKQJT"[v % 6 - 1]);
+		n += cards;
+	}
+	if (depth >= 7 && s.low_band) {
+		n += "｜";
+		std::string bands;
+		for (int v = s.low_band; v; v /= 3) bands.insert(0, v % 3 == 1 ? "中" : "小");
+		n += bands;
+	}
+	if (depth >= 8 && s.hl_conn) n += std::string("｜高低") + (s.hl_conn == 1 ? "連" : (s.hl_conn == 2 ? "跳" : "斷"));
+	if (depth >= 9 && s.suited) n += std::string("｜同花") + (s.suited == 1 ? "雙高" : (s.suited == 2 ? "高低" : "雙低"));
 	return n;
 }
 
-// The classes of all_flops() in the order of the levels above (indices into all_flops()); inside a group of all seven
+// The classes of all_flops() in the order of the levels above (indices into all_flops()); inside a group of all nine
 // levels: tighter gaps first, then higher cards first.
 static inline std::vector<int> flop_shape_order() {
 	const std::vector<Flop>& all = all_flops();
@@ -311,18 +335,18 @@ static inline std::vector<int> flop_shape_order() {
 	for (const Flop& f : all) s.push_back(flop_shape(f));
 	std::vector<int> order(all.size());
 	for (size_t i = 0; i < order.size(); i++) order[i] = (int)i;
-	auto key = [&](int i, int k[16]) {
+	auto key = [&](int i, int k[18]) {
 		const FlopShape& x = s[i];
 		int c[3] = {all[i].cards[0] >> 2, all[i].cards[1] >> 2, all[i].cards[2] >> 2};
 		std::sort(c, c + 3);
-		const int v[16] = {x.suits, -x.n_high, x.high_conn, x.low_conn, x.same_straight, x.hl_conn, x.suited, x.high_fine,
-		                   x.low_fine, x.hl_dist, x.suited_fine, -c[2], -c[1], -c[0], i, 0};
-		for (int j = 0; j < 16; j++) k[j] = v[j];
+		const int v[18] = {x.suits, -x.n_high, x.high_conn, x.low_conn, x.same_straight, x.high_set, x.low_band, x.hl_conn, x.suited,
+		                   x.high_fine, x.low_fine, x.hl_dist, x.suited_fine, -c[2], -c[1], -c[0], i, 0};
+		for (int j = 0; j < 18; j++) k[j] = v[j];
 	};
 	std::sort(order.begin(), order.end(), [&](int a, int b) {
-		int ka[16], kb[16];
+		int ka[18], kb[18];
 		key(a, ka); key(b, kb);
-		for (int j = 0; j < 16; j++)
+		for (int j = 0; j < 18; j++)
 			if (ka[j] != kb[j]) return ka[j] < kb[j];
 		return false;
 	});

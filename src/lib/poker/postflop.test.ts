@@ -97,7 +97,8 @@ describe('formulas', () => {
 			'Ks Kd 4c': 'paired',
 			'9c 9d 9s': 'paired',
 			'Ah 8h 2c': 'dry', // a flush draw alone does not make an ace-high board wet
-			'Kh 9h 6c': 'wet' // two-tone and loosely connected
+			'Kh 9h 6c': 'dry', // counted 13%: a flush draw and a few gutshots, no straight to speak of
+			'Ac 5d 4h': 'wet' // the wheel: ace plays low, three cards in one straight
 		};
 		for (const [text, want] of Object.entries(cases)) {
 			expect(postflop.boardTexture(parseCards(text)), text).toBe(want);
@@ -113,6 +114,18 @@ describe('formulas', () => {
 		expect(postflop.betSize(0.5, 'wet')).toBe(postflop.BIG_BET);
 		expect(postflop.betSize(0.5, 'dry')).toBe(postflop.SMALL_BET); // static board, even ranges
 		expect(postflop.betSize(0.61, 'wet')).toBe(postflop.SMALL_BET); // clear advantage
+		// with the nut edge known: a big bet needs the nuts on your side
+		expect(postflop.betSize(0.5, 'wet', 0.02)).toBe(postflop.BIG_BET);
+		expect(postflop.betSize(0.5, 'wet', -0.05)).toBe(postflop.SMALL_BET);
+		expect(postflop.betSize(0.46, 'dry', 0.01)).toBe(postflop.SMALL_BET); // behind, static, no real edge
+		expect(postflop.betSize(0.46, 'dry', 0.08)).toBe(postflop.BIG_BET);
+		// a monotone board never takes the big bet: neither range holds more of the nuts there
+		expect(postflop.betSize(0.5, 'monotone')).toBe(postflop.SMALL_BET);
+		expect(postflop.betSize(0.5, 'monotone', 0.05)).toBe(postflop.SMALL_BET);
+		expect(postflop.betSize(0.44, 'monotone', 0.05)).toBe(postflop.SMALL_BET);
+		expect(postflop.betFrequency(0.52, true, 'dry', 0.1)).toBeGreaterThan(
+			postflop.betFrequency(0.52, true, 'dry', -0.1)
+		);
 		expect(postflop.betFrequency(0.58, true, 'dry')).toBeGreaterThan(
 			postflop.betFrequency(0.52, true, 'dry')
 		);
@@ -136,6 +149,71 @@ describe('formulas', () => {
 		expect(postflop.hasMadeHand(parseCards('Qh 5c'), river)).toBe(false);
 		expect(postflop.hasMadeHand(parseCards('Ah 5c'), river)).toBe(true);
 		expect(postflop.boardTexture(river)).toBe(postflop.boardTexture(parseCards('As 7d 2c')));
+	});
+});
+
+describe('the flop read', () => {
+	it('is keyed by the matchup and only exists on the flop of a 6-max pot', () => {
+		const { g, order } = toFlop(BTN_VS_BB);
+		const [, , aggressor, key] = postflop.headsUpRanges(g, order[BTN], order)!;
+		expect(key).toBe('srp:BTN:BB');
+		const read = postflop.flopRead(key, g.board, aggressor)!;
+		expect(read.group.name).toBe('三花｜1高｜低斷｜不同順｜A｜中小');
+		expect(postflop.flopRead(key, [...g.board, ...parseCards('Kd')], aggressor)).toBeNull();
+		expect(postflop.flopRead(null, g.board, aggressor)).toBeNull();
+		expect(postflop.flopRead('srp:BB:UTG', g.board, aggressor)).toBeNull();
+	});
+
+	it('gives the two players the two sides of the same numbers', () => {
+		const board = parseCards(WET);
+		const a = postflop.flopRead('srp:CO:BB', board, true)!;
+		const c = postflop.flopRead('srp:CO:BB', board, false)!;
+		expect(a.range_eq + c.range_eq).toBeCloseTo(1, 6);
+		expect(a.nut_mine).toBe(c.nut_theirs);
+		expect(a.range_eq_min).toBeLessThanOrEqual(a.range_eq);
+		expect(a.range_eq_max).toBeGreaterThanOrEqual(a.range_eq);
+		expect(c.range_eq_min).toBeCloseTo(1 - a.range_eq_max, 6);
+	});
+
+	it('agrees with the sampled range equity of the actual board', () => {
+		// The table is exact for the group (flops of one group differ by about a point), the profile is
+		// sampled on this very flop (a few points of noise). If the ranges or the sides of the table and
+		// of the app did not match, they would be far apart.
+		const diffs: number[] = [];
+		for (const seat of [BTN, BB]) {
+			for (const text of [DRY, WET, 'Kc 8d 3h', 'Qh Jh 4s', '9c 9d 4s', 'Ts 6s 2s']) {
+				const { g, order } = toFlop(BTN_VS_BB, text);
+				const [mine, theirs, aggressor, key] = postflop.headsUpRanges(g, order[seat], order)!;
+				const read = postflop.flopRead(key, g.board, aggressor)!;
+				const hand = postflop.sampleHand(mine, g.board, mulberry32(1))!;
+				const prof = postflop.profile(g.board, hand, mine, theirs)!;
+				diffs.push(Math.abs(read.range_eq - prof.range_eq));
+			}
+		}
+		expect(Math.max(...diffs)).toBeLessThan(0.07);
+		expect(diffs.reduce((s, d) => s + d, 0) / diffs.length).toBeLessThan(0.03);
+	});
+
+	it('the plan stands on the read when there is one', () => {
+		const { g, order } = toFlop(BTN_VS_BB);
+		const { prof } = profileFor(g, order, BTN, 'Ah Kd');
+		const base = {
+			texture: 'dry' as const,
+			pot: 6,
+			to_call: 0,
+			aggressor: true,
+			facing_raise: false
+		};
+		const read = postflop.flopRead('srp:BTN:BB', g.board, true)!;
+		const strong = postflop.makePlan(prof, {
+			...base,
+			flop: { ...read, range_eq: 0.6, nut_mine: 0.3, nut_theirs: 0.1 }
+		});
+		const weak = postflop.makePlan(prof, {
+			...base,
+			flop: { ...read, range_eq: 0.45, nut_mine: 0.05, nut_theirs: 0.2 }
+		});
+		expect(strong.frequency).toBeGreaterThan(weak.frequency + 0.3);
 	});
 });
 

@@ -14,6 +14,7 @@ import type { Card } from './cards';
 import pushFoldMixData from './data/pushfold-mix.json';
 import { evaluate } from './evaluate';
 import { HEADS_UP_STACKS as SOLVED_STACKS, solvedChart } from './headsup';
+import { FLOP_GROUPS, flopGroup, matchupKey } from './flopGroups';
 import * as postflop from './postflop';
 import {
 	EQUITY_VS_RANDOM,
@@ -368,6 +369,9 @@ export function boardEquity(q: BoardQuery): BoardEquity {
 		: [callerRange, aggressorRange];
 
 	const texture = postflop.boardTexture(board);
+	// The flop's group: the leaf of the tree. Its numbers for this matchup exist on the flop only.
+	const group = flopGroup(board);
+	const read = postflop.flopRead(matchupKey(q.pot, q.opener, q.other), board, isAggressor);
 	const grid =
 		q.view === 'mine'
 			? postflop.classEquities(board, mine, theirs)
@@ -377,12 +381,15 @@ export function boardEquity(q: BoardQuery): BoardEquity {
 	const theirCurve = postflop.equityCurve(board, theirs, mine);
 	if (!grid || !prof || !myCurve || !theirCurve)
 		throw new ChartError('No hands left in a range on this board');
-	const myEq = prof.range_eq;
+	// On the flop the range equity is the group's exact number (the plan stands on the same one); on the
+	// turn and river it is sampled on the board.
+	const myEq = read?.range_eq ?? prof.range_eq;
 	const advantage = myEq > 0.52 ? 'you' : myEq < 0.48 ? 'them' : 'even';
 
 	const toCall = q.bet ?? 0;
 	const plan = postflop.makePlan(prof, {
 		texture,
+		flop: read,
 		pot: 1 + toCall,
 		to_call: toCall,
 		aggressor: isAggressor,
@@ -422,6 +429,20 @@ export function boardEquity(q: BoardQuery): BoardEquity {
 		aggressor: isAggressor,
 		board: [...board],
 		texture,
+		group: {
+			id: group.id,
+			name: group.name,
+			of: FLOP_GROUPS.length,
+			wetness: group.wetness,
+			flops: group.flops,
+			read: read && {
+				range_eq: read.range_eq,
+				range_eq_min: read.range_eq_min,
+				range_eq_max: read.range_eq_max,
+				nut_mine: read.nut_mine,
+				nut_theirs: read.nut_theirs
+			}
+		},
 		unknown: {
 			my_range_eq: myEq,
 			their_range_eq: 1 - myEq,

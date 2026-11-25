@@ -64,7 +64,16 @@ describe('against the Python reference', () => {
 			// Sampled: within the noise of a few hundred scenarios.
 			expect(Math.abs(result.unknown.my_range_eq - ref.my_range_eq), label).toBeLessThan(0.045);
 			expect(result.unknown.my_range_eq + result.unknown.their_range_eq).toBeCloseTo(1, 9);
-			expect(Math.abs(result.plan.bet_frequency - ref.plan.bet_frequency), label).toBeLessThan(0.2);
+			// On the flop the plan no longer follows the reference: it stands on the flop group's exact
+			// range equity and nut edge (flopstats), where the reference used the sampled equity alone.
+			if (result.group.read === null) {
+				expect(Math.abs(result.plan.bet_frequency - ref.plan.bet_frequency), label).toBeLessThan(
+					0.2
+				);
+			} else {
+				expect(result.plan.bet_frequency, label).toBeGreaterThanOrEqual(0.05);
+				expect(result.plan.bet_frequency, label).toBeLessThanOrEqual(0.95);
+			}
 			if (ref.grid_AA !== null && result.unknown.grid.AA !== undefined) {
 				expect(Math.abs(result.unknown.grid.AA - ref.grid_AA), label).toBeLessThan(0.08);
 			}

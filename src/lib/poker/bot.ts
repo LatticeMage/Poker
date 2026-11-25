@@ -420,7 +420,7 @@ function streetPlan(
 	if (g.street === 'preflop') return null;
 	const plan = postflop.headsUpRanges(g, legal.seat, preflopOrder(g));
 	if (!plan) return null;
-	const [mine, theirs, aggressor] = plan;
+	const [mine, theirs, aggressor, key] = plan;
 	const prof = postflop.profile(g.board, hole, mine, theirs);
 	if (!prof) return null;
 	const me = g.players[legal.seat];
@@ -428,6 +428,7 @@ function streetPlan(
 		prof,
 		{
 			texture: postflop.boardTexture(g.board),
+			flop: postflop.flopRead(key, g.board, aggressor),
 			pot: legal.pot,
 			to_call: legal.to_call,
 			can_raise: legal.can_raise,

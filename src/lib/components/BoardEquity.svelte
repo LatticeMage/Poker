@@ -266,6 +266,25 @@
 						{/if}
 						{result.unknown.my_combos} combos for you, {result.unknown.their_combos} for them.
 					</p>
+					<p class="mt-1 text-xs text-slate-400" data-testid="flop-group">
+						Flop group {result.group.id}/{result.group.of}:
+						<span class="font-semibold text-slate-200">{result.group.name}</span>
+						· {result.group.flops} flops · wetness {pct(result.group.wetness)}.
+						{#if result.group.read}
+							The range equity above is this group's, counted exactly (its flops run from
+							<span class="tabular-nums">{pct(result.group.read.range_eq_min)}</span> to
+							<span class="tabular-nums">{pct(result.group.read.range_eq_max)}</span>). Nut hands
+							(80%+ equity):
+							<span class="font-semibold text-slate-200 tabular-nums"
+								>{pct(result.group.read.nut_mine)}</span
+							>
+							of your range,
+							<span class="font-semibold text-slate-200 tabular-nums"
+								>{pct(result.group.read.nut_theirs)}</span
+							>
+							of theirs.
+						{/if}
+					</p>
 				</div>
 
 				<EquityChart

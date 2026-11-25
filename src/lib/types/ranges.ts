@@ -138,6 +138,30 @@ export interface BoardEquity {
 	aggressor: boolean;
 	board: number[];
 	texture: string;
+	/** The flop's group in the classification (the base of the decision tree). */
+	group: {
+		id: number;
+		/** The levels of the tree, e.g. "三花｜1高｜低斷｜不同順｜K｜中小". */
+		name: string;
+		/** How many groups there are. */
+		of: number;
+		/** Share of hole-card hands that make or draw a flush or a straight on these flops. */
+		wetness: number;
+		/** How many of the 22,100 flops are in the group. */
+		flops: number;
+		/**
+		 * The matchup on flops of this group, computed exactly offline; null off the flop. Your range's
+		 * equity (group mean, and the lowest and highest flop of the group) and each side's nut hands
+		 * (at least 80% equity).
+		 */
+		read: {
+			range_eq: number;
+			range_eq_min: number;
+			range_eq_max: number;
+			nut_mine: number;
+			nut_theirs: number;
+		} | null;
+	};
 	unknown: UnknownHands;
 	known: KnownHand | null;
 	plan: {

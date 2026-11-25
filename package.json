@@ -16,6 +16,8 @@
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"tables": "vite-node tools/make-tables.ts",
+		"flop-groups": "vite-node tools/make-flop-groups.ts",
+		"matchups": "vite-node tools/make-matchups.ts",
 		"apply-pushfold": "vite-node tools/apply-pushfold.ts",
 		"solve": "vite-node tools/solve-preflop.ts"
 	},

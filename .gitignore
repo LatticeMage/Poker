@@ -35,3 +35,6 @@ tools/.cache
 # external repos cloned for reference
 .tmp
 .claude/worktrees
+
+# raw results of offline computation: local only, the website reads the JSON made from them
+nvcc/data/*.bin

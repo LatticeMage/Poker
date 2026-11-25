@@ -110,7 +110,14 @@ describe('board equity', () => {
 		expect(u.my_curve.length).toBeGreaterThanOrEqual(40);
 		expect(u.my_curve).toEqual([...u.my_curve].sort((a, b) => a - b));
 		expect(u.their_curve).toEqual([...u.their_curve].sort((a, b) => a - b));
-		expect(u.my_curve.reduce((s, v) => s + v, 0) / u.my_curve.length).toBeCloseTo(u.my_range_eq);
+		// On the flop the range equity is the flop group's exact number; the curves are sampled on this
+		// very board, so their mean is near it, not equal.
+		expect(out.group.name).toBe('三花｜1高｜低斷｜不同順｜A｜中小');
+		expect(out.group.read!.range_eq).toBe(u.my_range_eq);
+		expect(out.group.read!.nut_mine).toBeGreaterThan(out.group.read!.nut_theirs);
+		expect(
+			Math.abs(u.my_curve.reduce((s, v) => s + v, 0) / u.my_curve.length - u.my_range_eq)
+		).toBeLessThan(0.04);
 		expect(
 			Math.abs(u.their_curve.reduce((s, v) => s + v, 0) / u.their_curve.length - u.their_range_eq)
 		).toBeLessThan(0.04);
